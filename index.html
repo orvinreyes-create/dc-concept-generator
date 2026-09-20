@@ -375,7 +375,7 @@ function rectSeg(r,s){
 function roadArea(segs){return segs.reduce((t,s)=>t+segLen(s)*s.w,0);}
 /* The street is the edge the user picked, or the longest edge when they have not. */
 function frontEdge(P,fp){
-  let best=null,score=-1;
+  let best=null,score=-Infinity;
   for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];
     const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2];
     const v=fp?-Math.hypot(mid[0]-fp[0],mid[1]-fp[1]):Math.hypot(b[0]-a[0],b[1]-a[1]);
