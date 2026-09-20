@@ -66,6 +66,16 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 .projects li{display:flex;justify-content:space-between;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)}
 .projects button{font:inherit;font-size:13px;background:none;border:0;color:var(--accent);cursor:pointer;padding:0 3px}
 .status{font-size:13px;color:var(--muted);min-height:18px;margin-top:6px}
+.info{width:15px;height:15px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);font:600 10px/1 Barlow,sans-serif;cursor:help;padding:0;margin-left:5px;vertical-align:1px}
+.info:hover,.info:focus-visible{border-color:var(--accent);color:var(--accent)}
+#tip{position:fixed;z-index:60;max-width:270px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:8px 10px;font-size:13px;line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.results td:first-child{padding-right:4px}
+.search{position:relative}
+#searchResults{position:absolute;top:100%;left:0;right:44px;margin:4px 0 0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:5px;box-shadow:0 6px 18px rgba(0,0,0,.18);max-height:260px;overflow:auto}
+#searchResults li{padding:0}
+#searchResults button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--ink);font:inherit;font-size:13px;padding:6px 8px;border-radius:4px;cursor:pointer}
+#searchResults button:hover,#searchResults button:focus-visible{background:var(--paper)}
+#searchResults .none{padding:6px 8px;font-size:13px;color:var(--muted)}
 @media (max-width:1100px){
   .app{grid-template-columns:1fr;height:auto}
   .mapwrap{height:68vh;order:-1}
@@ -84,11 +94,17 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
   <span class="pill" id="bodPill"></span>
   <div class="btns">
     <button class="btn" id="bodImport" type="button">Import profile</button>
-    <button class="btn" id="bodExport" type="button">Export profile</button>
+    <button class="btn" id="bodExport" type="button">Export as CSV</button>
   </div>
-  <input type="file" id="bodFile" accept=".json,application/json" hidden>
+  <div class="btns">
+    <button class="btn" id="bodTemplate" type="button">Blank CSV template</button>
+    <button class="btn" id="bodExportJson" type="button">Export as JSON</button>
+  </div>
+  <p class="hint">A profile is a spreadsheet of design values. Export the CSV, edit it in Excel, then import it back.</p>
+  <input type="file" id="bodFile" accept=".csv,.json,text/csv,application/json" hidden>
 
   <h2>Profile</h2>
+  <label id="lbl-typology">Site typology</label>
   <div class="seg" id="segProfile"><button data-v="metro" aria-pressed="true">Metro</button><button data-v="campus" aria-pressed="false">Campus</button></div>
   <label for="density">Rack density</label>
   <select id="density">
@@ -101,7 +117,7 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
     <div><label for="targetMW">Target IT (MW)</label><input id="targetMW" type="number" min="1" step="1"></div>
     <div><label for="kw">kW per rack</label><input id="kw" type="number" min="1"></div>
   </div>
-  <label>Electrical plant</label>
+  <label id="lbl-elecPlant">Electrical plant</label>
   <div class="seg" id="segElec"><button data-v="EROOM" aria-pressed="true">EROOM</button><button data-v="EMOD" aria-pressed="false">EMOD</button></div>
 
   <h2>Site rules</h2>
@@ -165,7 +181,7 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 <div class="mapwrap">
   <div id="map"></div>
   <div class="toolbar">
-    <form class="search" id="searchForm"><input id="searchQ" placeholder="Search a place in the Philippines" aria-label="Search place"><button class="btn" type="submit">Go</button></form>
+    <form class="search" id="searchForm" autocomplete="off"><input id="searchQ" placeholder="Search a place in the Philippines" aria-label="Search place" role="combobox" aria-expanded="false" aria-controls="searchResults" autocomplete="off"><button class="btn" type="submit">Search</button><ul id="searchResults" hidden></ul></form>
     <button class="btn" id="btnDraw" type="button" aria-pressed="false">Draw site</button>
     <button class="btn" id="btnFinish" type="button" hidden>Finish</button>
     <button class="btn" id="btnRemove" type="button" disabled>Remove corner</button>
@@ -179,6 +195,7 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
   <div class="live" id="live"></div>
 </div>
 
+<div id="tip" role="tooltip" hidden></div>
 <section class="results" id="results"><h2>Spec sheet</h2><p class="hint">Draw a site to see results.</p></section>
 </div>
 
@@ -290,16 +307,16 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
     if(L.some(s=>s.spill>0)) limit+=" Heat rejection in ground yards is taking site area.";}
   return {deg:r.deg,a:r.a,placed:r.placed,it,fac,cov:r.cov,limit,flags,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
-    rows:[["Site area",fmt(siteArea/1e4,2)+" ha"],["Block rotation",r.deg+"°"],["Data buildings",L.length+" of "+r.specs.length],
-      ["IT load",fmt(it,0)+" MW"],["Facility load at PUE "+o.pue,fmt(fac,1)+" MW"],["Racks",fmt(sum(s=>s.racks),0)],["Density",o.kw+" kW/rack"],
-      ["Data hall area",fmt(sum(s=>s.hall),0)+" sqm"],["Gross floor area, data buildings",fmt(sum(s=>s.gross),0)+" sqm"],
-      ["Admin gross floor area",fmt(L.length*B.elec[o.elec].admin,0)+" sqm"],["Building footprint",fmt(sum(s=>s.foot+s.adminFoot),0)+" sqm"],
-      ["Building coverage",fmt(r.cov,1)+"%"],["Storeys / height",o.storeys+" / "+fmt(maxHt,1)+" m"],
-      ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm"],["Heat rejection on roof",fmt(sum(s=>s.roofHR),0)+" sqm"],
-      ["Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm"],["Heat to liquid",fmt(liquidMW,1)+" MW ("+o.liquid+"%)"],
-      ["CDUs (2 MW, N+1 per building)",fmt(cdus,0)],["ITE power streams",fmt(streams,0)],
-      ["Generators ("+fmt(B.genKVA,0)+" kVA, incl. house)",fmt(gens,0)],["Fuel stored at "+B.fuelHours+" h",fmt(gens*B.fuelLPerGen/1000,0)+" m³"],
-      ["Substation area",fmt(subArea,0)+" sqm"],["Stormwater retention",fmt(pondArea,0)+" sqm"],["Parking and support yards",fmt(supportArea,0)+" sqm"]]};
+    rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Block rotation",r.deg+"°","rotation"],["Data buildings",L.length+" of "+r.specs.length,"buildings"],
+      ["IT load",fmt(it,0)+" MW","itLoad"],["Facility load at PUE "+o.pue,fmt(fac,1)+" MW","facLoad"],["Racks",fmt(sum(s=>s.racks),0),"racks"],["Density",o.kw+" kW/rack","densityRow"],
+      ["Data hall area",fmt(sum(s=>s.hall),0)+" sqm","hallArea"],["Gross floor area, data buildings",fmt(sum(s=>s.gross),0)+" sqm","gfa"],
+      ["Admin gross floor area",fmt(L.length*B.elec[o.elec].admin,0)+" sqm","adminGfa"],["Building footprint",fmt(sum(s=>s.foot+s.adminFoot),0)+" sqm","footprint"],
+      ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",o.storeys+" / "+fmt(maxHt,1)+" m","storeysRow"],
+      ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm","ecFoot"],["Heat rejection on roof",fmt(sum(s=>s.roofHR),0)+" sqm","roofHR"],
+      ["Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm","yardHR"],["Heat to liquid",fmt(liquidMW,1)+" MW ("+o.liquid+"%)","liquidRow"],
+      ["CDUs (2 MW, N+1 per building)",fmt(cdus,0),"cdus"],["ITE power streams",fmt(streams,0),"streams"],
+      ["Generators ("+fmt(B.genKVA,0)+" kVA, incl. house)",fmt(gens,0),"gensRow"],["Fuel stored at "+B.fuelHours+" h",fmt(gens*B.fuelLPerGen/1000,0)+" m³","fuelRow"],
+      ["Substation area",fmt(subArea,0)+" sqm","subRow"],["Stormwater retention",fmt(pondArea,0)+" sqm","pondRow"],["Parking and support yards",fmt(supportArea,0)+" sqm","supportRow"]]};
 }
 function fmt(n,d){return Number(n).toLocaleString("en-PH",{minimumFractionDigits:d,maximumFractionDigits:d});}
 function parseBearings(txt){const pts=[[0,0]];let x=0,y=0;const lines=txt.split(/\n/).map(l=>l.trim()).filter(Boolean);
@@ -318,6 +335,150 @@ function parseCoords(txt){let ring;
 
 /* ===== BOD profiles ===== */
 const $=id=>document.getElementById(id);
+
+/* ===== Explainers ===== */
+const TIP={
+bodSelect:"Which set of design values the app is calculating with. Profiles are spreadsheets you import, so different standards or clients can each have their own.",
+typology:"Metro is a smaller site inside a city or business district, usually under 5 ha and 10-20 MW. Campus is a larger site outside the city, 5 ha or more and 50-300 MW. The choice sets the starting values for target load, setbacks, storeys and building size.",
+density:"How much power each rack draws. Enterprise racks are conventional air-cooled IT. AI-ready racks are GPU systems that draw far more per rack and reject most of their heat to liquid, which shrinks the hall but not the plant.",
+targetMW:"The IT load you want the site to carry, before cooling and electrical losses. This is the number a tenant contracts for. The app reports how much of it actually fits.",
+kw:"Power drawn by one rack. Dividing your target load by this gives the rack count, which drives the size of the data hall.",
+elecPlant:"How the electrical equipment is housed. EROOM puts switchgear and UPS inside the building, so the building is larger and the outdoor energy centre smaller. EMOD moves them into outdoor modules, shrinking the building but enlarging the yard. EMOD usually suits tight sites better.",
+setback:"How far buildings must stay from the property line, set by the city zoning ordinance and the National Building Code. The app keeps every structure outside this band.",
+maxH:"The tallest the building may be under local zoning or aviation limits. The app flags an option whose building, including rooftop plant, exceeds it.",
+maxCov:"The largest share of the lot that buildings may cover at ground level, from the zoning ordinance. Open space rules usually drive this number.",
+storeys:"How many floors of data halls are stacked. More storeys fit more load on a small site but raise the building height and the structural loading.",
+sqmRack:"Floor area each rack occupies including its share of aisles, containment and cooling equipment. Denser AI racks need more area each, because of the cooling gear around them.",
+pue:"Power usage effectiveness: total facility power divided by IT power. 1.45 means the site draws 1.45 MW for every 1 MW reaching the IT. Manila's heat and humidity push this higher than a European design basis would suggest.",
+liquid:"The share of IT heat carried away by liquid cooling rather than air. High-density AI racks send most of their heat to liquid, which changes the size of both the hall and the heat rejection plant.",
+rackKg:"Weight of one loaded rack. The app flags a design whose racks exceed the profile's floor loading basis, since that usually means the upper floors need structural review.",
+hrPerMW:"Area of chillers, dry coolers or condensers needed per MW of IT load. When more is needed than the roof can hold, the app places the remainder in a ground-level yard, which takes site area away from buildings.",
+bldgMax:"The largest load put into a single building before the app starts a second one. It reflects how your standard building is built, for example two 24 MW blocks forming a 48 MW building.",
+pondPct:"Share of the site set aside for stormwater retention, as required by drainage rules. Enter the figure your civil engineer uses.",
+roadW:"Width of the internal road ring around each building, used for deliveries, generator replacement and fire access.",
+projName:"Names the site. It is used for saved projects and for the exported file names.",
+siteArea:"Total area inside the boundary you drew or imported.",
+rotation:"The angle the building blocks were turned to fit the site. The app tries several and keeps the best.",
+buildings:"How many of the required data buildings actually fit. Fewer than required means the site cannot take the full target load.",
+itLoad:"IT load achieved by this layout. This is the number to quote to a tenant.",
+facLoad:"Total power the site draws from the grid, including cooling and losses. This is the number the utility cares about, and the basis of the connection application.",
+racks:"Total racks across the buildings that fit, at the density you set.",
+densityRow:"Power per rack used in this calculation.",
+hallArea:"Floor area of the data halls themselves, excluding plant, offices and circulation.",
+gfa:"Total floor area of the data buildings across all storeys, including halls, electrical rooms and circulation.",
+adminGfa:"Floor area of the administration and support block, which holds offices, security and welfare areas.",
+footprint:"Ground area covered by buildings. This is what the coverage limit applies to.",
+coverageRow:"Building footprint as a share of the site. Compare it with the zoning limit you entered.",
+storeysRow:"Number of floors and the resulting building height, including rooftop plant. Compare it with the height limit.",
+ecFoot:"Ground area of the energy centre, which houses transformers, switchgear, UPS and generators. It grows under EMOD and shrinks under EROOM.",
+roofHR:"Heat rejection equipment that fits on the building roof, which keeps it off the ground and frees site area.",
+yardHR:"Heat rejection equipment that did not fit on the roof and sits in a ground-level yard. A large figure here is usually what stops more load fitting.",
+liquidRow:"How much of the IT load is cooled by liquid rather than air, and the percentage assumed.",
+cdus:"Coolant distribution units, which transfer heat from the rack liquid loop to the facility loop. Sized at 2 MW each with one spare per building.",
+streams:"Independent 2 MW power paths feeding the IT equipment. The profile's redundancy rule decides how many are needed per module.",
+gensRow:"Standby generators including the one serving house loads such as lighting and offices.",
+fuelRow:"Total diesel stored on site to run the generators for the hours set in the profile. It drives tank sizing and refuelling access.",
+subRow:"Land set aside for the substation that connects the site to the grid. It grows with facility load.",
+pondRow:"Land set aside for stormwater retention.",
+supportRow:"Land for car parking, loading, waste and other support yards."
+};
+function showTip(el,text){const t=$("tip");if(!text)return;t.textContent=text;t.hidden=false;
+  const r=el.getBoundingClientRect(),w=t.offsetWidth,h=t.offsetHeight;
+  let x=Math.min(window.innerWidth-w-8,Math.max(8,r.left-4)),y=r.bottom+6;
+  if(y+h>window.innerHeight-8) y=Math.max(8,r.top-h-6);
+  t.style.left=x+"px";t.style.top=y+"px";}
+function hideTip(){const t=$("tip");t.hidden=true;t.dataset.k="";}
+document.addEventListener("click",e=>{const b=e.target.closest(".info");
+  if(!b){hideTip();return;}
+  e.preventDefault();e.stopPropagation();
+  const t=$("tip");if(!t.hidden&&t.dataset.k===b.dataset.tip){hideTip();return;}
+  t.dataset.k=b.dataset.tip;showTip(b,TIP[b.dataset.tip]);});
+document.addEventListener("mouseover",e=>{const b=e.target.closest(".info");if(b){$("tip").dataset.k=b.dataset.tip;showTip(b,TIP[b.dataset.tip]);}});
+document.addEventListener("mouseout",e=>{const b=e.target.closest(".info");if(b&&document.activeElement!==b)hideTip();});
+document.addEventListener("focusin",e=>{const b=e.target.closest(".info");if(b)showTip(b,TIP[b.dataset.tip]);});
+window.addEventListener("resize",hideTip);
+document.addEventListener("scroll",hideTip,true);
+function addTips(){
+  Object.keys(TIP).forEach(k=>{
+    const host=document.querySelector('label[for="'+k+'"]')||document.getElementById("lbl-"+k);
+    if(!host||host.querySelector(".info"))return;
+    const b=document.createElement("button");b.type="button";b.className="info";b.dataset.tip=k;b.textContent="i";
+    b.setAttribute("aria-label","What is "+host.textContent.trim()+"?");
+    host.appendChild(b);});
+}
+
+/* ===== Profile as a spreadsheet ===== */
+const CSV_ROWS=[
+ ["name","Profile name shown in the app"],
+ ["moduleMW","MW of IT load in one repeatable data hall module"],
+ ["circFactor","Gross floor area per unit of hall area (1.3 means 30% added for circulation and support)"],
+ ["floorM","Floor to floor height in metres"],
+ ["roofPlantM","Extra height added for rooftop plant, in metres"],
+ ["rackKgLimit","Rack weight the structure is designed for, in kg"],
+ ["gensPerModule","Power streams (and generators) per module"],
+ ["genKVA","Generator rating in kVA"],
+ ["fuelHours","Hours of generator fuel stored on site"],
+ ["fuelLPerGen","Litres of fuel stored per generator"],
+ ["elec.EROOM.crit","EROOM: critical support area inside the building, sqm per MW"],
+ ["elec.EROOM.ecPerMW","EROOM: outdoor energy centre area, sqm per MW"],
+ ["elec.EROOM.admin","EROOM: admin block gross floor area, sqm"],
+ ["elec.EMOD.crit","EMOD: critical support area inside the building, sqm per MW"],
+ ["elec.EMOD.ecPerMW","EMOD: outdoor energy centre area, sqm per MW"],
+ ["elec.EMOD.admin","EMOD: admin block gross floor area, sqm"]
+];
+["ent","ai60","ai130","ai200"].forEach(d=>{
+ CSV_ROWS.push(["density."+d+".kw","kW per rack for the "+d+" tier"],
+  ["density."+d+".sqmRack","Hall area per rack including aisles, sqm"],
+  ["density."+d+".liquid","Share of heat going to liquid cooling, %"],
+  ["density."+d+".rackKg","Weight of one loaded rack, kg"],
+  ["density."+d+".hr","Heat rejection area needed, sqm per MW"]);});
+["metro","campus"].forEach(pf=>["ent","ai60","ai130","ai200"].forEach(d=>
+ CSV_ROWS.push(["pue."+pf+"."+d,"Design PUE for "+pf+", "+d])));
+["metro","campus"].forEach(pf=>{
+ CSV_ROWS.push(["profile."+pf+".targetMW","Default target IT load, MW"],
+  ["profile."+pf+".setback","Default setback, m"],
+  ["profile."+pf+".maxH","Default height limit, m"],
+  ["profile."+pf+".maxCov","Default maximum building coverage, %"],
+  ["profile."+pf+".storeys","Default number of data hall storeys"],
+  ["profile."+pf+".bldgMax","Largest IT load in one building, MW"],
+  ["profile."+pf+".pond","Stormwater retention, % of site"],
+  ["profile."+pf+".road","Internal road width, m"],
+  ["profile."+pf+".supportSqm","Parking and support yards, sqm"]);});
+function getPath(o,path){return path.split(".").reduce((a,k)=>a==null?a:a[k],o);}
+function setPath(o,path,v){const ks=path.split("."),last=ks.pop();let t=o;for(const k of ks){if(typeof t[k]!=="object"||t[k]===null)t[k]={};t=t[k];}t[last]=v;}
+function csvCell(v){v=String(v==null?"":v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
+function bodToCsv(B){
+  return ["parameter,value,what this sets"].concat(
+    CSV_ROWS.map(function(r){const v=getPath(B,r[0]);return [csvCell(r[0]),csvCell(v==null?"":v),csvCell(r[1])].join(",");})
+  ).join("\n");}
+function parseCsvRows(text){
+  const rows=[];let row=[],cell="",q=false;
+  text=text.replace(/^﻿/,"").replace(/\r\n?/g,"\n");
+  for(let i=0;i<text.length;i++){const c=text[i];
+    if(q){ if(c==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else q=false; } else cell+=c; }
+    else if(c==='"') q=true;
+    else if(c===","){row.push(cell);cell="";}
+    else if(c==="\n"){row.push(cell);rows.push(row);row=[];cell="";}
+    else cell+=c;}
+  if(cell.length||row.length){row.push(cell);rows.push(row);}
+  return rows.filter(r=>r.some(x=>x.trim()!==""));}
+function csvToBod(text){
+  const rows=parseCsvRows(text);
+  if(!rows.length) throw new Error("The file is empty.");
+  let start=0; const h=rows[0].map(x=>x.trim().toLowerCase());
+  if(h[0]==="parameter"||h[0]==="key") start=1;
+  const out={},seen=[];
+  for(let i=start;i<rows.length;i++){
+    const path=(rows[i][0]||"").trim(); if(!path||path.charAt(0)==="#") continue;
+    let v=(rows[i][1]||"").trim();
+    if(path!=="name"){
+      const n=Number(v.replace(/,/g,""));
+      if(v===""||isNaN(n)) throw new Error("Row "+(i+1)+": “"+path+"” needs a number, but the value column says “"+v+"”.");
+      v=n;}
+    setPath(out,path,v);seen.push(path);}
+  if(!seen.length) throw new Error("No parameter rows found. Keep the parameter names in the first column.");
+  return out;}
+
 const LS_BOD="dccg.bod.v1", LS_PROJ="dccg.projects.v1", LS_ACTIVE="dccg.bod.active";
 function lsGet(k,d){try{return JSON.parse(localStorage.getItem(k))??d;}catch(e){return d;}}
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
@@ -340,17 +501,27 @@ function drawBOD(){
 $("bodSelect").onchange=e=>{localStorage.setItem(LS_ACTIVE,e.target.value);drawBOD();applyDefaults();};
 $("bodImport").onclick=()=>$("bodFile").click();
 $("bodFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;
-  try{const p=validateBOD(JSON.parse(await f.text()));p.id=p.id||("p"+Date.now());p.importedAt=new Date().toISOString();
+  try{const text=await f.text();
+    const raw=/^\s*[\{\[]/.test(text)?JSON.parse(text):csvToBod(text);
+    const p=validateBOD(raw);p.id=p.id||("p"+Date.now());p.importedAt=new Date().toISOString();
+    if(!p.name||p.name===PLACEHOLDER.name) p.name=f.name.replace(/\.(csv|json)$/i,"");
     const list=profiles().filter(x=>x.name!==p.name);list.push(p);
     if(!lsSet(LS_BOD,list)) throw new Error("This browser blocked storage. Private browsing may be on.");
     localStorage.setItem(LS_ACTIVE,p.id);drawBOD();applyDefaults();status("Imported profile "+p.name+".");}
   catch(err){status("Import failed: "+err.message);} e.target.value="";};
-$("bodExport").onclick=()=>{const B=activeBOD(),o=readOpts(),copy=JSON.parse(JSON.stringify(B));
-  delete copy.placeholder;copy.name=B.placeholder?"My profile":B.name;
+function currentProfileCopy(){const B=activeBOD(),o=readOpts(),copy=JSON.parse(JSON.stringify(B));
+  delete copy.placeholder;delete copy.id;delete copy.importedAt;copy.name=B.placeholder?"My basis of design":B.name;
   Object.assign(copy.density[state.density],{kw:o.kw,sqmRack:o.sqmRack,liquid:o.liquid,rackKg:o.rackKg,hr:o.hrPerMW});
   copy.pue[state.profile][state.density]=o.pue;
   Object.assign(copy.profile[state.profile],{setback:o.setback,maxH:o.maxH,maxCov:o.maxCov,storeys:o.storeys,bldgMax:o.bldgMax,pond:o.pond,road:o.road,targetMW:o.targetMW});
-  download((copy.name||"profile").replace(/[^\w\-]+/g,"-")+".json",JSON.stringify(copy,null,2),"application/json");};
+  return copy;}
+function fileSafe(n){return String(n||"profile").replace(/[^\w\-]+/g,"-");}
+$("bodExport").onclick=()=>{const c=currentProfileCopy();download(fileSafe(c.name)+".csv",bodToCsv(c),"text/csv");
+  status("Exported as CSV. Edit the value column in Excel, then import it back.");};
+$("bodExportJson").onclick=()=>{const c=currentProfileCopy();download(fileSafe(c.name)+".json",JSON.stringify(c,null,2),"application/json");};
+$("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));delete t.placeholder;t.name="My basis of design";
+  download("basis-of-design-template.csv",bodToCsv(t),"text/csv");
+  status("Template downloaded. Replace the values, keep the parameter names, then import it.");};
 
 /* ===== State and form ===== */
 const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm"};
@@ -459,11 +630,28 @@ map.on("click",e=>{if(!state.drawing)return;state.draft.push([e.lngLat.lng,e.lng
 $("btnBase").onclick=()=>{state.base=state.base==="osm"?"sat":"osm";
   map.setLayoutProperty("osm","visibility",state.base==="osm"?"visible":"none");map.setLayoutProperty("sat","visibility",state.base==="sat"?"visible":"none");
   $("btnBase").textContent=state.base==="osm"?"Satellite":"Street map";};
+function closeResults(){const l=$("searchResults");l.hidden=true;l.innerHTML="";$("searchQ").setAttribute("aria-expanded","false");}
+function showResults(items,q){
+  const l=$("searchResults");l.hidden=false;$("searchQ").setAttribute("aria-expanded","true");
+  if(!items.length){l.innerHTML='<li class="none">Nothing found for \u201C'+esc(q)+'\u201D. Try adding the city or province, or search the barangay instead.</li>';return;}
+  l.innerHTML=items.map((it,i)=>'<li><button type="button" data-i="'+i+'">'+esc(it.label)+'</button></li>').join("");
+  l.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    const it=items[+b.dataset.i];
+    if(it.box) map.fitBounds(it.box,{padding:60,maxZoom:18,duration:600});
+    else map.flyTo({center:[it.lon,it.lat],zoom:17,duration:600});
+    $("searchQ").value=it.short;closeResults();});}
 $("searchForm").onsubmit=async e=>{e.preventDefault();const q=$("searchQ").value.trim();if(!q)return;
-  try{const r=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ph&q="+encodeURIComponent(q),{headers:{"Accept-Language":"en"}});
-    const j=await r.json();if(!j.length){status("No place found for “"+q+"”.");return;}
-    map.flyTo({center:[+j[0].lon,+j[0].lat],zoom:17});status("");}
-  catch(err){status("Search is unavailable right now.");}};
+  const l=$("searchResults");l.hidden=false;l.innerHTML='<li class="none">Searching\u2026</li>';
+  try{
+    const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&countrycodes=ph&addressdetails=1&q="+encodeURIComponent(q));
+    if(!r.ok) throw new Error("status "+r.status);
+    const j=await r.json();
+    const items=j.map(x=>({lon:+x.lon,lat:+x.lat,label:x.display_name,short:x.name||String(x.display_name).split(",")[0],
+      box:(x.boundingbox&&Math.abs(+x.boundingbox[1]-+x.boundingbox[0])>0.002)?[[+x.boundingbox[2],+x.boundingbox[0]],[+x.boundingbox[3],+x.boundingbox[1]]]:null}));
+    showResults(items,q);}
+  catch(err){l.innerHTML='<li class="none">Search is unavailable right now. You can still pan the map by hand.</li>';}};
+$("searchQ").addEventListener("keydown",e=>{if(e.key==="Escape")closeResults();});
+document.addEventListener("click",e=>{if(!e.target.closest(".search"))closeResults();});
 
 /* imports */
 $("useBearings").onclick=()=>{try{const r=parseBearings($("bearings").value),c=map.getCenter(),F=frame([[c.lng,c.lat]]);
@@ -529,7 +717,7 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   ${o.density!=="ent"?'<div class="banner">AI-ready values are indicative industry assumptions.</div>':''}
   ${state.closure>1?`<p class="flag">Title courses do not close by ${fmt(state.closure,2)} m.</p>`:""}
   <div class="limit">${esc(op.limit)}</div>${op.flags.map(f=>`<p class="flag">${esc(f)}</p>`).join("")}
-  <table>${op.rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("")}</table>
+  <table>${op.rows.map(r=>`<tr><td>${r[0]}${r[2]&&TIP[r[2]]?`<button type="button" class="info" data-tip="${r[2]}" aria-label="What does ${esc(r[0])} mean?">i</button>`:""}</td><td>${r[1]}</td></tr>`).join("")}</table>
   <p class="hint">${esc(op.grid)}</p>
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
   <div class="legend"><span style="--c:${COLORS.hall}">Data building</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:${COLORS.yard}">Heat rejection yard</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Road</span></div>`;}
@@ -580,7 +768,7 @@ function status(t){$("status").textContent=t;if(t)setTimeout(()=>{if($("status")
    waiting for the map's load event, which never fires while a tab is in the
    background (the browser freezes animation frames there). */
 function init(){
-  drawBOD();applyDefaults();drawProjects();
+  addTips();drawBOD();applyDefaults();drawProjects();
   const last=lsGet("dccg.lastSession",null);
   if(last&&last.ring&&last.ring.length>=3){restore(last);return;}
   const c=map.getCenter(),F=frame([[c.lng,c.lat]]);
