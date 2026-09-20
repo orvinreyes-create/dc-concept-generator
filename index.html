@@ -62,6 +62,8 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 .banner{font-size:12.5px;color:var(--warn);border:1px dashed var(--warn);padding:6px 8px;border-radius:4px;margin:8px 0}
 .legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12.5px;color:var(--muted);margin-top:10px}
 .legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px;background:var(--c)}
+.chk{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink);margin:9px 0 3px}
+.chk input{width:auto}
 .projects{list-style:none;padding:0;margin:8px 0 0;font-size:14px}
 .projects li{display:flex;justify-content:space-between;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)}
 .projects button{font:inherit;font-size:13px;background:none;border:0;color:var(--accent);cursor:pointer;padding:0 3px}
@@ -119,6 +121,13 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
   </div>
   <label id="lbl-elecPlant">Electrical plant</label>
   <div class="seg" id="segElec"><button data-v="EROOM" aria-pressed="true">EROOM</button><button data-v="EMOD" aria-pressed="false">EMOD</button></div>
+  <label for="massing">Massing</label>
+  <select id="massing">
+    <option value="auto">Automatic</option>
+    <option value="modular">Campus modules</option>
+    <option value="infill">Infill building</option>
+  </select>
+  <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
   <label for="circulation">Circulation</label>
   <select id="circulation">
     <option value="auto">Compare all three</option>
@@ -352,6 +361,68 @@ function gateFor(P,segs){
     if(d<bd){bd=d;node=p;}}}
   return node?{edge:best,node:node,w:6}:null;}
 
+/* ===== infill massing =====
+   A small urban parcel does not take a campus module. The building fills the
+   plot to the setback and coverage limits and goes vertical instead, with the
+   electrical and mechanical rooms stacked inside and access off the street. */
+function centroidOf(P){let a=0,cx=0,cy=0;
+  for(let i=0;i<P.length;i++){const p=P[i],q=P[(i+1)%P.length],f=p[0]*q[1]-q[0]*p[1];a+=f;cx+=(p[0]+q[0])*f;cy+=(p[1]+q[1])*f;}
+  a*=0.5;return a?[cx/(6*a),cy/(6*a)]:[P[0][0],P[0][1]];}
+function scaleAbout(P,c,k){return P.map(p=>[c[0]+(p[0]-c[0])*k,c[1]+(p[1]-c[1])*k]);}
+function solveInfill(o,poly,B,siteArea){
+  const dens=(o.mix&&o.mix.length===1)?o.mix[0].dens:o.density;
+  const mw=(o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;
+  const inner=insetPoly(poly,o.setback);
+  const innerArea=Math.abs(polyArea(inner));
+  if(innerArea<600) return null;
+  const c=centroidOf(inner);
+  /* leave a service strip for the dock and the spur, then respect coverage */
+  const service=Math.min(innerArea*0.28,Math.max(400,o.dockApron*35));
+  const capCov=siteArea*o.maxCov/100;
+  const footArea=Math.min(innerArea-service,capCov);
+  if(footArea<400) return null;
+  const k=Math.sqrt(footArea/innerArea);
+  const shell=scaleAbout(inner,c,k);
+  const d=B.density[dens],E=B.elec[o.elec];
+  const racks=Math.round(mw*1000/d.kw), hall=racks*d.sqmRack;
+  const gfaHall=hall*B.circFactor+E.crit*mw, ec=E.ecPerMW*mw, admin=E.admin;
+  const total=gfaHall+ec+admin;
+  const storeys=Math.max(1,Math.ceil(total/footArea));
+  const hrNeed=d.hr*mw, roofCap=footArea*0.85;
+  const plantFloors=Math.max(0,Math.ceil((hrNeed-roofCap)/footArea));
+  const height=(storeys+plantFloors)*B.floorM+B.roofPlantM+1.5;
+  const spec={m:mw,dens:dens,kw:d.kw,racks:racks,hall:hall,gross:total,foot:footArea,adminFoot:0,
+    ecFoot:ec,adminGfa:admin,roofHR:Math.min(hrNeed,roofCap),spill:Math.max(0,hrNeed-roofCap),
+    liquid:d.liquid,rackKg:d.rackKg,pue:B.pue[o.profile][dens],height:height,
+    storeys:storeys,plantFloors:plantFloors,infill:true,apronDepth:0};
+  /* street access: spur from the longest boundary edge to the dock */
+  let edge=null,bl=0;
+  for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],l=Math.hypot(b[0]-a[0],b[1]-a[1]);
+    if(l>bl){bl=l;edge=[[a[0],a[1]],[b[0],b[1]],[(a[0]+b[0])/2,(a[1]+b[1])/2]];}}
+  const mid=edge[2];
+  let near=shell[0],nd=1e9;
+  for(const p of shell){const dd=Math.hypot(p[0]-mid[0],p[1]-mid[1]);if(dd<nd){nd=dd;near=p;}}
+  const dockC=[(near[0]+mid[0])/2,(near[1]+mid[1])/2];
+  const ex=edge[1][0]-edge[0][0],ey=edge[1][1]-edge[0][1],el=Math.hypot(ex,ey)||1;
+  const ux=ex/el,uy=ey/el,half=Math.min(bl*0.32,28);
+  /* the apron sits in the strip between the street and the building, never outside the lot */
+  const sc=centroidOf(shell);
+  let nx=uy,ny=-ux;
+  if((sc[0]-mid[0])*nx+(sc[1]-mid[1])*ny<0){nx=-nx;ny=-ny;}
+  let gap=1e9;
+  for(const q of shell) gap=Math.min(gap,(q[0]-mid[0])*nx+(q[1]-mid[1])*ny);
+  gap=Math.max(4,gap);
+  const depth=Math.min(o.dockApron,gap);
+  const dock=[[mid[0]-ux*half,mid[1]-uy*half],[mid[0]+ux*half,mid[1]+uy*half],
+              [mid[0]+ux*half+nx*depth,mid[1]+uy*half+ny*depth],[mid[0]-ux*half+nx*depth,mid[1]-uy*half+ny*depth]];
+  const apronShort=depth<o.dockApron*0.6;
+  spec.apronDepth=depth;spec.apronShort=apronShort;
+  const roads=[{a:mid,b:dockC,w:Math.max(6,o.road*0.75),kind:"access"}];
+  return {deg:0,a:0,type:"infill",shell:shell,dock:dock,roads:roads,placed:[],mw:mw,built:[spec],specs:[spec],
+    subOK:true,pondOK:true,supOK:true,cov:footArea/siteArea*100,storeys:storeys+plantFloors,
+    gate:{edge:mid,node:dockC,w:6},roadArea:roads.reduce((t,r)=>t+segLen(r)*r.w,0),targetMW:mw,
+    score:mw*1e6-1e3};}
+
 function solve(o,poly,B,coarse,hintDeg){
   if(polyArea(poly)<0) poly=poly.slice().reverse();
   const siteArea=Math.abs(polyArea(poly));
@@ -373,7 +444,7 @@ function solve(o,poly,B,coarse,hintDeg){
     angs.add(Math.round(t*180/Math.PI)%90);}
   if(!angs.size) angs.add(0);
   if(coarse&&hintDeg!=null&&angs.has(hintDeg)) {angs.clear();angs.add(hintDeg);}
-  const types=o.circulation==="auto"?["internal","perimeter","external"]:[o.circulation];
+  const types=o.circulation==="auto"?["internal","perimeter","external"]:(o.circulation==="infill"?[]:[o.circulation]);
   const res=[];
   for(const deg of angs) for(const type of types){
     const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
@@ -420,9 +491,28 @@ function solve(o,poly,B,coarse,hintDeg){
     const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,!coarse);
     const cov=built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
     const ra=roadArea(roads),gate=gateFor(P,roads);
+    /* GRD: the building entrance faces the main gate where feasible. The envelope
+       stays put; the admin and dock columns are mirrored to the side nearest the gate. */
+    if(o.faceGate!==false&&gate) for(const pl of placed){
+      if(pl.kind!=="bldg") continue;
+      const s=pl.meta.s,r=pl.r,sw=pl.meta.swap;
+      const adminCentre=(mu,mv)=>{const u=mu?(sw?r[3]-r[1]:r[2]-r[0]):0;
+        const cu=(mu? (sw?r[3]:r[2])-s.La/2 : (sw?r[1]:r[0])+s.La/2);
+        const cv=(sw?r[0]:r[1])+((sw?r[2]-r[0]:r[3]-r[1])/2);
+        return sw?[cv,cu]:[cu,cv];};
+      let best=null,bd=1e9;
+      for(const mu of [false,true]){const c=adminCentre(mu);
+        const d=Math.hypot(c[0]-gate.node[0],c[1]-gate.node[1]);
+        if(d<bd){bd=d;best=mu;}}
+      pl.meta.mirror=best;}
     res.push({deg,a,type,roads,placed,mw,built,subOK,pondOK,supOK,cov,specs,gate,roadArea:ra,targetMW,
       score:mw*1e6+(subOK?4e5:0)+(pondOK?2e5:0)+(supOK?1e5:0)-ra*0.4});
   }
+  /* a small parcel usually cannot take a campus module: offer the infill building */
+  const wantInfill=o.massing==="infill"||o.circulation==="infill"||
+    (o.massing!=="modular"&&(!res.length||Math.max(0,...res.map(r=>r.mw))<targetMW*0.999));
+  if(wantInfill){const inf=solveInfill(o,poly,B,siteArea);if(inf)res.push(inf);}
+  if(o.massing==="infill"||o.circulation==="infill"){const only=res.filter(r=>r.type==="infill");if(only.length)res.length=0,res.push(only[0]);}
   res.sort((p,q)=>q.score-p.score);
   const top=[],usedType=new Set();
   for(const r of res){ if(top.length&&r.mw<top[0].mw*0.5) continue;
@@ -434,7 +524,8 @@ function solve(o,poly,B,coarse,hintDeg){
 }
 
 function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
-  const L=r.built,sum=f=>L.reduce((t,s)=>t+f(s),0),it=r.mw;
+  const L=r.built,sum=f=>L.reduce((t,s)=>t+f(s),0),it=r.mw,infill=r.type==="infill";
+  const storeysUsed=r.storeys||o.storeys;
   const fac=sum(s=>s.m*s.pue), pueEff=it?fac/it:0;
   const streams=sum(s=>Math.ceil(s.m/B.moduleMW)*B.gensPerModule),gens=streams+L.length;
   const liquidMW=sum(s=>s.m*s.liquid/100),cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
@@ -443,30 +534,37 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(!r.subOK) flags.push("Substation does not fit on the site.");
   if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
   if(!r.supOK) flags.push("Parking and support yards do not fit.");
-  if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit. Reduce storeys.");
+  if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
+  if(infill){const s0=L[0];
+    flags.push("Infill massing: the building fills the plot and stacks "+s0.storeys+" floors"+(s0.plantFloors?" plus "+s0.plantFloors+" plant floor"+(s0.plantFloors>1?"s":""):"")+". Electrical and mechanical rooms sit inside the building.");
+    if(s0.apronShort) flags.push("Only "+fmt(s0.apronDepth,0)+" m is available between the street and the building, short of the "+o.dockApron+" m apron. The dock and ramp need to sit inside the building footprint, as urban designs normally do.");
+    flags.push("Stormwater retention and parking are not laid out in infill mode. Assume underground tanks and parking inside the building or off site.");
+    if(s0.spill>0) flags.push("Heat rejection needs "+fmt(s0.spill,0)+" sqm more than the roof holds, so a plant floor is allowed for. Confirm with the mechanical engineer.");}
   if(r.cov>o.maxCov) flags.push("Coverage "+r.cov.toFixed(0)+"% exceeds the "+o.maxCov+"% limit.");
   if(heavy.length) flags.push(heavy.length+" building"+(heavy.length>1?"s":"")+" exceed the "+B.rackKgLimit+" kg floor loading basis. Upper floors need structural review.");
   if(o.profile==="metro"&&siteArea>=50000) flags.push("Site is 5 ha or more, which fits the campus profile.");
   if(o.profile==="campus"&&siteArea<50000) flags.push("Site is under 5 ha, which fits the metro profile.");
   if(!r.gate) flags.push("No road reaches the boundary, so the site has no gate position.");
   let limit;
-  if(it>=r.targetMW) limit="Target of "+r.targetMW+" MW IT fits.";
+  if(infill) limit="Target of "+r.targetMW+" MW IT fits as an infill building of "+L[0].storeys+" floors on "+fmt(L[0].foot,0)+" sqm.";
+  else if(it>=r.targetMW) limit="Target of "+r.targetMW+" MW IT fits.";
   else{const n=r.specs[L.length];
-    limit=L.length===0?"No data building fits. The smallest needs about "+Math.round(n.Lm+2*o.road)+" \u00D7 "+Math.round(n.H+(n.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)+" m including yard clearances."
+    limit=L.length===0?"No campus-style block fits. The smallest needs about "+Math.round(n.Lm+2*o.road)+" \u00D7 "+Math.round(n.H+(n.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)+" m including yard clearances."
       :"Site caps this option at "+it+" MW of "+r.targetMW+" MW. Building "+(L.length+1)+" ("+n.m+" MW) does not fit.";
     if(L.some(s=>s.spill>0)) limit+=" Ground-level heat rejection is taking site area.";}
-  const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives"}[r.type];
+  const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
+    shell:r.shell,dock:r.dock,infill:infill,storeys:storeysUsed,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
     rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Circulation",cname+", "+r.deg+"°","circRow"],
       ["Data buildings",L.length+" of "+r.specs.length,"buildings"],
       ["IT load",fmt(it,0)+" MW","itLoad"],["Facility load at PUE "+fmt(pueEff,2),fmt(fac,1)+" MW","facLoad"],
       ["Racks",fmt(sum(s=>s.racks),0),"racks"],
       ["Data hall area",fmt(sum(s=>s.hall),0)+" sqm","hallArea"],["Gross floor area, data buildings",fmt(sum(s=>s.gross),0)+" sqm","gfa"],
-      ["Admin gross floor area",fmt(L.length*B.elec[o.elec].admin,0)+" sqm","adminGfa"],
+      ["Admin gross floor area",fmt(infill?sum(s=>s.adminGfa||0):L.length*B.elec[o.elec].admin,0)+" sqm","adminGfa"],
       ["Truck docks",fmt(L.length*2,0)+" ("+fmt(L.length,0)+" × 2)","docksRow"],
       ["Building footprint",fmt(sum(s=>s.foot+s.adminFoot),0)+" sqm","footprint"],
-      ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",o.storeys+" / "+fmt(maxHt,1)+" m","storeysRow"],
+      ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",storeysUsed+" / "+fmt(maxHt,1)+" m","storeysRow"],
       ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm","ecFoot"],
       ["Heat rejection on roof",fmt(sum(s=>s.roofHR),0)+" sqm","roofHR"],
       ["Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm","yardHR"],
@@ -703,6 +801,8 @@ function seg(id,key,cb){$(id).addEventListener("click",e=>{const b=e.target.clos
 seg("segProfile","profile",applyDefaults); seg("segElec","elec",()=>schedule(false));
 $("density").onchange=e=>{state.density=e.target.value;applyDensity();};
 $("circulation").onchange=()=>schedule(false);
+$("massing").onchange=()=>schedule(false);
+$("faceGate").onchange=()=>schedule(false);
 
 /* ----- building mix ----- */
 const DSHORT={ent:"Enterprise",ai60:"AI 60 kW",ai130:"AI 130 kW",ai200:"AI 200 kW"};
@@ -731,6 +831,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
+    massing:$("massing").value,faceGate:$("faceGate").checked,
     mix:state.mix.length?state.mix.slice():null,supportSqm:B.profile[state.profile].supportSqm||2000};}
 
 /* ===== Map ===== */
@@ -746,8 +847,8 @@ const EMPTY={type:"FeatureCollection",features:[]};
 map.on("load",()=>{
   map.addSource("layout",{type:"geojson",data:EMPTY});
   map.addSource("site",{type:"geojson",data:EMPTY});
-  map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":0.55}});
-  map.addLayer({id:"layout-fill",type:"fill",source:"layout",paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":0.88}});
+  map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":1}});
+  map.addLayer({id:"layout-fill",type:"fill",source:"layout",paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":1}});
   map.addLayer({id:"layout-line",type:"line",source:"layout",paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
   map.addLayer({id:"site-line",type:"line",source:"site",paint:{"line-color":"#0F6E8C","line-width":2.5,"line-dasharray":[3,1.5]}});
   state.mapReady=true;
@@ -899,26 +1000,43 @@ function clearLabels(){labels.forEach(m=>m.remove());labels=[];}
 function renderLayout(){
   const op=state.result.options[state.opt],o=state.o,F=state.F,feats=[];clearLabels();
   const toLL=(x,y)=>F.toLL(rot([x,y],op.a));
-  const minLabel=state.result.siteArea*0.004;   /* hide labels on slivers */
-  const quad=(pts,kind,label,a)=>{const ring=pts.map(p=>toLL(p[0],p[1]));ring.push(ring[0]);
+  const minLabel=state.result.siteArea*0.004;
+  const quad=(pts,kind,label,ar)=>{const ring=pts.map(p=>toLL(p[0],p[1]));ring.push(ring[0]);
     feats.push({type:"Feature",properties:{kind:kind},geometry:{type:"Polygon",coordinates:[ring]}});
-    if(label&&(a===undefined||a>=minLabel)){const c=pts.reduce((t,p)=>[t[0]+p[0]/pts.length,t[1]+p[1]/pts.length],[0,0]);
+    if(label&&(ar===undefined||ar>=minLabel)){const c=pts.reduce((t,p)=>[t[0]+p[0]/pts.length,t[1]+p[1]/pts.length],[0,0]);
       const el=document.createElement("div");el.className="lbl";el.innerHTML=label;
       labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(c[0],c[1])).addTo(map));}};
-  const box=(q,kind,label,a)=>quad([[q[0],q[1]],[q[2],q[1]],[q[2],q[3]],[q[0],q[3]]],kind,label,a);
-  const strip=(a,b,w,kind)=>{const dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy)||1,px=-dy/l*w/2,py=dx/l*w/2;
-    quad([[a[0]+px,a[1]+py],[b[0]+px,b[1]+py],[b[0]-px,b[1]-py],[a[0]-px,a[1]-py]],kind,null);};
-  const sq=a=>fmt(Math.round(a),0)+" sqm";
-  const tag=(n,a)=>n+'<br><span style="font-weight:400;opacity:.75">'+sq(a)+"</span>";
-  for(const c of op.roads) strip(c.a,c.b,c.w,"road");
-  if(op.gate) strip(op.gate.node,op.gate.edge,op.gate.w,"road");
+  const box=(q,kind,label,ar)=>quad([[q[0],q[1]],[q[2],q[1]],[q[2],q[3]],[q[0],q[3]]],kind,label,ar);
+  const sq=v=>fmt(Math.round(v),0)+" sqm";
+  const tag=(n,v)=>n+'<br><span style="font-weight:400;opacity:.75">'+sq(v)+"</span>";
+  /* roads: strips plus a rounded knuckle at every end, so junctions read as
+     continuous carriageway instead of overlapping bars */
+  const strip=(a1,b1,w)=>{const dx=b1[0]-a1[0],dy=b1[1]-a1[1],l=Math.hypot(dx,dy)||1,px=-dy/l*w/2,py=dx/l*w/2;
+    quad([[a1[0]+px,a1[1]+py],[b1[0]+px,b1[1]+py],[b1[0]-px,b1[1]-py],[a1[0]-px,a1[1]-py]],"road",null);};
+  const knuckle=(p,w)=>{const n=14,pts=[];for(let i=0;i<n;i++){const t=i/n*Math.PI*2;pts.push([p[0]+Math.cos(t)*w/2,p[1]+Math.sin(t)*w/2]);}quad(pts,"road",null);};
+  for(const c of op.roads) strip(c.a,c.b,c.w);
+  if(op.gate) strip(op.gate.node,op.gate.edge,op.gate.w);
+  const ends=[];
+  for(const c of op.roads){ends.push([c.a,c.w]);ends.push([c.b,c.w]);}
+  if(op.gate) ends.push([op.gate.node,op.gate.w]);
+  const seen={};
+  for(const [p,w] of ends){const k=p[0].toFixed(1)+","+p[1].toFixed(1);
+    if(seen[k]&&seen[k]>=w) continue; seen[k]=w; knuckle(p,w);}
+  if(op.infill){
+    quad(op.shell,"hall",tag("B1 "+fmt(op.built[0].m,0)+" MW \u00B7 "+DSHORT[op.built[0].dens]
+      +"<br>"+op.built[0].storeys+" floors",op.built[0].foot),op.built[0].foot);
+    quad(op.dock,"apron",tag("Dock and ramp",0).replace(/<br>.*/,""),0);
+  }
   for(const pl of op.placed){
     const r=pl.r,m=pl.meta;
     if(pl.kind==="sub"){box(r,"sub",tag("Substation",m.area),m.area);continue;}
     if(pl.kind==="pond"){box(r,"pond",tag("Retention",m.area),m.area);continue;}
     if(pl.kind==="support"){box(r,"support",tag("Parking and yards",m.area),m.area);continue;}
     const s=m.s,ix=r[0]+(m.swap?m.padTop:m.padX),iy=r[1]+(m.swap?m.padX:m.padTop);
-    const part=(u0,v0,u1,v1,kind,label,a)=>box(m.swap?[ix+v0,iy+u0,ix+v1,iy+u1]:[ix+u0,iy+v0,ix+u1,iy+v1],kind,label,a);
+    const span=m.swap?(r[3]-r[1])-m.padTop-m.padBot:(r[2]-r[0])-2*m.padX;
+    const U=u=>m.mirror?s.Lm-u:u;   /* mirror puts the entrance side toward the gate */
+    const part=(u0,v0,u1,v1,kind,label,ar)=>{const a0=Math.min(U(u0),U(u1)),a1=Math.max(U(u0),U(u1));
+      box(m.swap?[ix+v0,iy+a0,ix+v1,iy+a1]:[ix+a0,iy+v0,ix+a1,iy+v1],kind,label,ar);};
     if(s.Yd>0) part(s.La,0,s.Lm,s.Yd,"yard",tag("Heat rejection",s.spill),s.spill);
     part(s.La,s.Yd,s.Lm,s.Yd+s.D,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D),s.L*s.D);
     part(s.La,s.Yd+s.D,s.Lm,s.Yd+s.D+s.Ed,"ec",tag("Energy centre",s.ecFoot),s.ecFoot);
@@ -929,7 +1047,7 @@ function renderLayout(){
   if(src) src.setData({type:"FeatureCollection",features:feats});
   state.layoutGeo=feats;state.pendingLayout=!src;
   if(op.gate){const el=document.createElement("div");el.className="lbl";el.style.background="rgba(217,119,66,.92)";el.style.color="#fff";
-    el.textContent="Entry and exit gates";
+    el.textContent=op.infill?"Street access":"Entry and exit gates";
     labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(op.gate.edge[0],op.gate.edge[1])).addTo(map));}
 }
 function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
@@ -971,11 +1089,12 @@ $("btnPNG").onclick=()=>{if(!state.result)return;
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
-  return {app:"dccg",v:2,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:3,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
-  $("circulation").value=p.circulation||"auto";state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
+  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";
+  $("faceGate").checked=p.faceGate!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
 function drawProjects(){const l=lsGet(LS_PROJ,[]);
