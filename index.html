@@ -52,6 +52,7 @@ summary{cursor:pointer;font:600 16px "Barlow Condensed",sans-serif;padding:4px 0
 .vtx.sel{background:#B03A2E;border-color:#fff}
 .mid{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.85);border:2px dashed #0F6E8C;cursor:copy}
 .move{width:26px;height:26px;border-radius:50%;background:#0F6E8C;color:#fff;display:grid;place-items:center;font-size:15px;cursor:move;box-shadow:0 0 0 2px #fff}
+.dim{font:600 11px "Barlow Condensed",sans-serif;color:#0F6E8C;background:rgba(255,255,255,.88);border:1px solid rgba(15,110,140,.45);padding:0 4px;border-radius:3px;pointer-events:none;white-space:nowrap}
 .lbl{font:600 12px "Barlow Condensed",sans-serif;color:#1D2B36;background:rgba(255,255,255,.8);padding:1px 4px;border-radius:3px;pointer-events:none;white-space:nowrap}
 .big{font:600 32px/1 "Barlow Condensed",sans-serif}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -362,65 +363,128 @@ function gateFor(P,segs){
   return node?{edge:best,node:node,w:6}:null;}
 
 /* ===== infill massing =====
-   A small urban parcel does not take a campus module. The building fills the
-   plot to the setback and coverage limits and goes vertical instead, with the
-   electrical and mechanical rooms stacked inside and access off the street. */
+   A small urban parcel does not take a campus module. The building becomes a
+   single rectangle filling the plot, with the same functional zones as the
+   campus block - data halls, electrical rooms, mechanical rooms, admin and a
+   dock - stacked over several floors instead of spread across the site. */
 function centroidOf(P){let a=0,cx=0,cy=0;
   for(let i=0;i<P.length;i++){const p=P[i],q=P[(i+1)%P.length],f=p[0]*q[1]-q[0]*p[1];a+=f;cx+=(p[0]+q[0])*f;cy+=(p[1]+q[1])*f;}
   a*=0.5;return a?[cx/(6*a),cy/(6*a)]:[P[0][0],P[0][1]];}
-function scaleAbout(P,c,k){return P.map(p=>[c[0]+(p[0]-c[0])*k,c[1]+(p[1]-c[1])*k]);}
-function solveInfill(o,poly,B,siteArea){
+/* largest axis-aligned rectangle inside a polygon, by raster plus histogram */
+function largestRect(P,cell,exclude){
+  const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
+  const x0=Math.min(...xs),y0=Math.min(...ys),x1=Math.max(...xs),y1=Math.max(...ys);
+  const nx=Math.max(3,Math.ceil((x1-x0)/cell)),ny=Math.max(3,Math.ceil((y1-y0)/cell));
+  if(nx*ny>90000) return null;
+  const grid=[];
+  for(let j=0;j<ny;j++){const row=new Array(nx);
+    for(let i=0;i<nx;i++){const cx=x0+(i+0.5)*cell,cy=y0+(j+0.5)*cell;
+      row[i]=(pip(cx,cy,P)&&!(exclude&&exclude(cx,cy)))?1:0;}
+    grid.push(row);}
+  const h=new Array(nx).fill(0);let best=null,bestA=0;
+  for(let j=0;j<ny;j++){
+    for(let i=0;i<nx;i++) h[i]=grid[j][i]?h[i]+1:0;
+    const st=[];
+    for(let i=0;i<=nx;i++){const cur=i<nx?h[i]:0;
+      while(st.length&&h[st[st.length-1]]>=cur){
+        const top=st.pop(),hh=h[top],left=st.length?st[st.length-1]+1:0,w=i-left,ar=w*hh;
+        if(ar>bestA){bestA=ar;best=[left,j-hh+1,i-1,j];}}
+      st.push(i);}}
+  if(!best) return null;
+  return [x0+best[0]*cell,y0+best[1]*cell,x0+(best[2]+1)*cell,y0+(best[3]+1)*cell];
+}
+function solveInfill(o,poly,B,siteArea,angles){
   const dens=(o.mix&&o.mix.length===1)?o.mix[0].dens:o.density;
   const mw=(o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;
-  const inner=insetPoly(poly,o.setback);
-  const innerArea=Math.abs(polyArea(inner));
-  if(innerArea<600) return null;
-  const c=centroidOf(inner);
-  /* leave a service strip for the dock and the spur, then respect coverage */
-  const service=Math.min(innerArea*0.28,Math.max(400,o.dockApron*35));
-  const capCov=siteArea*o.maxCov/100;
-  const footArea=Math.min(innerArea-service,capCov);
-  if(footArea<400) return null;
-  const k=Math.sqrt(footArea/innerArea);
-  const shell=scaleAbout(inner,c,k);
   const d=B.density[dens],E=B.elec[o.elec];
   const racks=Math.round(mw*1000/d.kw), hall=racks*d.sqmRack;
-  const gfaHall=hall*B.circFactor+E.crit*mw, ec=E.ecPerMW*mw, admin=E.admin;
-  const total=gfaHall+ec+admin;
-  const storeys=Math.max(1,Math.ceil(total/footArea));
-  const hrNeed=d.hr*mw, roofCap=footArea*0.85;
-  const plantFloors=Math.max(0,Math.ceil((hrNeed-roofCap)/footArea));
+  const hallGfa=hall*B.circFactor, crit=E.crit*mw, ec=E.ecPerMW*mw, admin=E.admin;
+  const totalGfa=hallGfa+crit+ec+admin;
+  const capCov=siteArea*o.maxCov/100;
+  let bestFit=null;
+  for(const deg of angles){
+    const ang=deg*Math.PI/180, P=poly.map(p=>rot(p,-ang));
+    const inner=insetPoly(P,o.setback);
+    if(Math.abs(polyArea(inner))<400) continue;
+    /* the street is the longest boundary edge; keep an apron strip clear of it */
+    let mid=null,bl=0;
+    for(let i=0;i<P.length;i++){const u=P[i],v=P[(i+1)%P.length],l=Math.hypot(v[0]-u[0],v[1]-u[1]);
+      if(l>bl){bl=l;mid=[(u[0]+v[0])/2,(u[1]+v[1])/2,u[0],u[1],v[0],v[1]];}}
+    const cell=Math.max(1.5,Math.sqrt(siteArea)/55);
+    {
+      let r=largestRect(inner,cell,null);
+      if(!r) continue;
+      let w=r[2]-r[0],h=r[3]-r[1];
+      if(w*h<300) continue;
+      /* keep a sane building proportion */
+      const maxAsp=3;
+      if(w/h>maxAsp){const nw=h*maxAsp;r=[r[0],r[1],r[0]+nw,r[3]];w=nw;}
+      else if(h/w>maxAsp){const nh=w*maxAsp;r=[r[0],r[1],r[2],r[1]+nh];h=nh;}
+      /* respect the coverage limit, trimming the side away from the street */
+      if(w*h>capCov){const k=capCov/(w*h);
+        if(w>=h){const nw=w*k;const keepLeft=Math.hypot(r[0]-mid[0],0)<=Math.hypot(r[2]-mid[0],0);
+          if(keepLeft) r=[r[0],r[1],r[0]+nw,r[3]]; else r=[r[2]-nw,r[1],r[2],r[3]]; w=nw;}
+        else {const nh=h*k;const keepBot=Math.abs(r[1]-mid[1])<=Math.abs(r[3]-mid[1]);
+          if(keepBot) r=[r[0],r[1],r[2],r[1]+nh]; else r=[r[0],r[3]-nh,r[2],r[3]]; h=nh;}}
+      const area=w*h;
+      if(!bestFit||area>bestFit.area){bestFit={deg:deg,a:ang,P:P,rect:r,area:area,w:w,h:h,mid:mid};}
+    }
+  }
+  if(!bestFit) return null;
+  const F=bestFit.area,r=bestFit.rect;
+  /* which face looks at the street */
+  const m=bestFit.mid;
+  const faces=[["bottom",Math.abs(m[1]-r[1])],["top",Math.abs(m[1]-r[3])],["left",Math.abs(m[0]-r[0])],["right",Math.abs(m[0]-r[2])]];
+  faces.sort((x,y)=>x[1]-y[1]);
+  const front=faces[0][0], vertical=(front==="bottom"||front==="top");
+  const W=vertical?bestFit.w:bestFit.h;     /* along the frontage */
+  let storeys=Math.max(1,Math.ceil(totalGfa/F)),bands=null;
+  for(let guard=0;guard<60;guard++){
+    const dock=Math.min(Math.max(350,W*10),F*0.2);
+    const adminPF=admin/storeys, ecPF=ec/storeys, critPF=crit/storeys;
+    const hallPF=F-dock-adminPF-ecPF-critPF;
+    if(hallPF>=F*0.25){bands={dock:dock,admin:adminPF,ec:ecPF,crit:critPF,hall:hallPF};break;}
+    storeys++;
+  }
+  if(!bands) return null;
+  const hrNeed=d.hr*mw, roofCap=F*0.85;
+  const plantFloors=Math.max(0,Math.ceil((hrNeed-roofCap)/F));
   const height=(storeys+plantFloors)*B.floorM+B.roofPlantM+1.5;
-  const spec={m:mw,dens:dens,kw:d.kw,racks:racks,hall:hall,gross:total,foot:footArea,adminFoot:0,
+  /* lay the zones out as bands running back from the frontage */
+  const order=[["apron",bands.dock,"Dock and freight core"],["admin",bands.admin,"Admin and lobby"],
+               ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]];
+  const zones=[];let acc=0;
+  for(const [kind,ar,name] of order){
+    const t=ar/W;
+    let q;
+    if(front==="bottom") q=[r[0],r[1]+acc,r[2],r[1]+acc+t];
+    else if(front==="top") q=[r[0],r[3]-acc-t,r[2],r[3]-acc];
+    else if(front==="left") q=[r[0]+acc,r[1],r[0]+acc+t,r[3]];
+    else q=[r[2]-acc-t,r[1],r[2]-acc,r[3]];
+    zones.push({r:q,kind:kind,name:name,area:ar});acc+=t;
+  }
+  /* dock apron and access spur, in the strip between building and street */
+  const ax=m[4]-m[2],ay=m[5]-m[3],al=Math.hypot(ax,ay)||1,ux=ax/al,uy=ay/al;
+  const c=centroidOf(bestFit.P);
+  let nx=uy,ny=-ux;
+  if((c[0]-m[0])*nx+(c[1]-m[1])*ny<0){nx=-nx;ny=-ny;}
+  let gap=1e9;
+  for(const q of [[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]]) gap=Math.min(gap,(q[0]-m[0])*nx+(q[1]-m[1])*ny);
+  gap=Math.max(3,gap);
+  const frontLen=Math.hypot(m[4]-m[2],m[5]-m[3]);
+  const depth=Math.min(o.dockApron,gap),half=Math.min(frontLen*0.32,W*0.45);
+  const dockQuad=depth>=6?[[m[0]-ux*half,m[1]-uy*half],[m[0]+ux*half,m[1]+uy*half],
+                  [m[0]+ux*half+nx*depth,m[1]+uy*half+ny*depth],[m[0]-ux*half+nx*depth,m[1]-uy*half+ny*depth]]:null;
+  const dockC=[m[0]+nx*depth*0.5,m[1]+ny*depth*0.5];
+  const spec={m:mw,dens:dens,kw:d.kw,racks:racks,hall:hall,gross:totalGfa,foot:F,adminFoot:0,
     ecFoot:ec,adminGfa:admin,roofHR:Math.min(hrNeed,roofCap),spill:Math.max(0,hrNeed-roofCap),
     liquid:d.liquid,rackKg:d.rackKg,pue:B.pue[o.profile][dens],height:height,
-    storeys:storeys,plantFloors:plantFloors,infill:true,apronDepth:0};
-  /* street access: spur from the longest boundary edge to the dock */
-  let edge=null,bl=0;
-  for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length],l=Math.hypot(b[0]-a[0],b[1]-a[1]);
-    if(l>bl){bl=l;edge=[[a[0],a[1]],[b[0],b[1]],[(a[0]+b[0])/2,(a[1]+b[1])/2]];}}
-  const mid=edge[2];
-  let near=shell[0],nd=1e9;
-  for(const p of shell){const dd=Math.hypot(p[0]-mid[0],p[1]-mid[1]);if(dd<nd){nd=dd;near=p;}}
-  const dockC=[(near[0]+mid[0])/2,(near[1]+mid[1])/2];
-  const ex=edge[1][0]-edge[0][0],ey=edge[1][1]-edge[0][1],el=Math.hypot(ex,ey)||1;
-  const ux=ex/el,uy=ey/el,half=Math.min(bl*0.32,28);
-  /* the apron sits in the strip between the street and the building, never outside the lot */
-  const sc=centroidOf(shell);
-  let nx=uy,ny=-ux;
-  if((sc[0]-mid[0])*nx+(sc[1]-mid[1])*ny<0){nx=-nx;ny=-ny;}
-  let gap=1e9;
-  for(const q of shell) gap=Math.min(gap,(q[0]-mid[0])*nx+(q[1]-mid[1])*ny);
-  gap=Math.max(4,gap);
-  const depth=Math.min(o.dockApron,gap);
-  const dock=[[mid[0]-ux*half,mid[1]-uy*half],[mid[0]+ux*half,mid[1]+uy*half],
-              [mid[0]+ux*half+nx*depth,mid[1]+uy*half+ny*depth],[mid[0]-ux*half+nx*depth,mid[1]-uy*half+ny*depth]];
-  const apronShort=depth<o.dockApron*0.6;
-  spec.apronDepth=depth;spec.apronShort=apronShort;
-  const roads=[{a:mid,b:dockC,w:Math.max(6,o.road*0.75),kind:"access"}];
-  return {deg:0,a:0,type:"infill",shell:shell,dock:dock,roads:roads,placed:[],mw:mw,built:[spec],specs:[spec],
-    subOK:true,pondOK:true,supOK:true,cov:footArea/siteArea*100,storeys:storeys+plantFloors,
-    gate:{edge:mid,node:dockC,w:6},roadArea:roads.reduce((t,r)=>t+segLen(r)*r.w,0),targetMW:mw,
+    storeys:storeys,plantFloors:plantFloors,infill:true,
+    apronDepth:depth,apronShort:depth<o.dockApron*0.6,W:W,D:F/W,bands:bands};
+  const roads=[{a:[m[0],m[1]],b:dockC,w:Math.max(6,o.road*0.75),kind:"access"}];
+  return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,dock:dockQuad,roads:roads,placed:[],
+    mw:mw,built:[spec],specs:[spec],subOK:true,pondOK:true,supOK:true,cov:F/siteArea*100,storeys:storeys+plantFloors,
+    gate:{edge:[m[0],m[1]],node:dockC,w:6},roadArea:roads.reduce((t,x)=>t+segLen(x)*x.w,0),targetMW:mw,
     score:mw*1e6-1e3};}
 
 function solve(o,poly,B,coarse,hintDeg){
@@ -511,7 +575,7 @@ function solve(o,poly,B,coarse,hintDeg){
   /* a small parcel usually cannot take a campus module: offer the infill building */
   const wantInfill=o.massing==="infill"||o.circulation==="infill"||
     (o.massing!=="modular"&&(!res.length||Math.max(0,...res.map(r=>r.mw))<targetMW*0.999));
-  if(wantInfill){const inf=solveInfill(o,poly,B,siteArea);if(inf)res.push(inf);}
+  if(wantInfill){const inf=solveInfill(o,poly,B,siteArea,[...angs]);if(inf)res.push(inf);}
   if(o.massing==="infill"||o.circulation==="infill"){const only=res.filter(r=>r.type==="infill");if(only.length)res.length=0,res.push(only[0]);}
   res.sort((p,q)=>q.score-p.score);
   const top=[],usedType=new Set();
@@ -536,8 +600,9 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(!r.supOK) flags.push("Parking and support yards do not fit.");
   if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
   if(infill){const s0=L[0];
+    flags.push("The plan shows the ground floor. Upper floors carry more hall area once the dock and lobby are excluded.");
     flags.push("Infill massing: the building fills the plot and stacks "+s0.storeys+" floors"+(s0.plantFloors?" plus "+s0.plantFloors+" plant floor"+(s0.plantFloors>1?"s":""):"")+". Electrical and mechanical rooms sit inside the building.");
-    if(s0.apronShort) flags.push("Only "+fmt(s0.apronDepth,0)+" m is available between the street and the building, short of the "+o.dockApron+" m apron. The dock and ramp need to sit inside the building footprint, as urban designs normally do.");
+    if(s0.apronShort) flags.push("Only "+fmt(s0.apronDepth,0)+" m of yard is available between the street and the building, short of a "+o.dockApron+" m apron, so the dock and ramp are shown inside the footprint as urban designs normally do.");
     flags.push("Stormwater retention and parking are not laid out in infill mode. Assume underground tanks and parking inside the building or off site.");
     if(s0.spill>0) flags.push("Heat rejection needs "+fmt(s0.spill,0)+" sqm more than the roof holds, so a plant floor is allowed for. Confirm with the mechanical engineer.");}
   if(r.cov>o.maxCov) flags.push("Coverage "+r.cov.toFixed(0)+"% exceeds the "+o.maxCov+"% limit.");
@@ -554,7 +619,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
     if(L.some(s=>s.spill>0)) limit+=" Ground-level heat rejection is taking site area.";}
   const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
-    shell:r.shell,dock:r.dock,infill:infill,storeys:storeysUsed,
+    rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
     rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Circulation",cname+", "+r.deg+"°","circRow"],
       ["Data buildings",L.length+" of "+r.specs.length,"buildings"],
@@ -563,6 +628,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
       ["Data hall area",fmt(sum(s=>s.hall),0)+" sqm","hallArea"],["Gross floor area, data buildings",fmt(sum(s=>s.gross),0)+" sqm","gfa"],
       ["Admin gross floor area",fmt(infill?sum(s=>s.adminGfa||0):L.length*B.elec[o.elec].admin,0)+" sqm","adminGfa"],
       ["Truck docks",fmt(L.length*2,0)+" ("+fmt(L.length,0)+" × 2)","docksRow"],
+      ["Typical floor plate",infill?fmt(L[0].foot,0)+" sqm ("+fmt(L[0].W,0)+" \u00D7 "+fmt(L[0].D,0)+" m)":"\u2014","plateRow"],
       ["Building footprint",fmt(sum(s=>s.foot+s.adminFoot),0)+" sqm","footprint"],
       ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",storeysUsed+" / "+fmt(maxHt,1)+" m","storeysRow"],
       ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm","ecFoot"],
@@ -1023,9 +1089,14 @@ function renderLayout(){
   for(const [p,w] of ends){const k=p[0].toFixed(1)+","+p[1].toFixed(1);
     if(seen[k]&&seen[k]>=w) continue; seen[k]=w; knuckle(p,w);}
   if(op.infill){
-    quad(op.shell,"hall",tag("B1 "+fmt(op.built[0].m,0)+" MW \u00B7 "+DSHORT[op.built[0].dens]
-      +"<br>"+op.built[0].storeys+" floors",op.built[0].foot),op.built[0].foot);
-    quad(op.dock,"apron",tag("Dock and ramp",0).replace(/<br>.*/,""),0);
+    const b0=op.built[0];
+    if(op.dock) quad(op.dock,"apron",null);
+    for(const z of op.zones) box(z.r,z.kind,tag(z.name,z.area),z.area);
+    const rc=op.rect,el=document.createElement("div");el.className="lbl";
+    el.innerHTML="B1 "+fmt(b0.m,0)+" MW \u00B7 "+DSHORT[b0.dens]+"<br><span style='font-weight:400;opacity:.8'>"
+      +b0.storeys+" floors \u00B7 "+fmt(b0.gross,0)+" sqm GFA</span>";
+    el.style.background="rgba(255,255,255,.92)";el.style.border="1px solid rgba(29,43,54,.35)";
+    labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL((rc[0]+rc[2])/2,rc[3])).addTo(map));
   }
   for(const pl of op.placed){
     const r=pl.r,m=pl.meta;
@@ -1046,6 +1117,19 @@ function renderLayout(){
   const src=map.getSource("layout");
   if(src) src.setData({type:"FeatureCollection",features:feats});
   state.layoutGeo=feats;state.pendingLayout=!src;
+  /* boundary dimensions */
+  if(state.ring.length>2){const Fm=state.F;
+    const pts=state.ring.map(Fm.toM);
+    const cen=pts.reduce((t,p)=>[t[0]+p[0]/pts.length,t[1]+p[1]/pts.length],[0,0]);
+    const off=Math.max(6,Math.sqrt(state.result.siteArea)/28);
+    for(let i=0;i<pts.length;i++){
+      const p1=pts[i],p2=pts[(i+1)%pts.length];
+      const L=Math.hypot(p2[0]-p1[0],p2[1]-p1[1]);
+      if(L<8) continue;
+      const mx=(p1[0]+p2[0])/2,my=(p1[1]+p2[1])/2;
+      const vx=mx-cen[0],vy=my-cen[1],vl=Math.hypot(vx,vy)||1;
+      const el=document.createElement("div");el.className="dim";el.textContent=fmt(L,1)+" m";
+      labels.push(new maplibregl.Marker({element:el}).setLngLat(Fm.toLL([mx+vx/vl*off,my+vy/vl*off])).addTo(map));}}
   if(op.gate){const el=document.createElement("div");el.className="lbl";el.style.background="rgba(217,119,66,.92)";el.style.color="#fff";
     el.textContent=op.infill?"Street access":"Entry and exit gates";
     labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(op.gate.edge[0],op.gate.edge[1])).addTo(map));}
