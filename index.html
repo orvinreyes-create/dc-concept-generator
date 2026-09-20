@@ -129,6 +129,11 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
     <option value="infill">Infill building</option>
   </select>
   <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
+  <label for="bandAxis">Zone bands</label>
+  <select id="bandAxis">
+    <option value="auto">Lengthwise (recommended)</option>
+    <option value="cross">Crosswise</option>
+  </select>
   <label for="circulation">Circulation</label>
   <select id="circulation">
     <option value="auto">Compare all three</option>
@@ -432,12 +437,19 @@ function solveInfill(o,poly,B,siteArea,angles){
   }
   if(!bestFit) return null;
   const F=bestFit.area,r=bestFit.rect;
-  /* which face looks at the street */
-  const m=bestFit.mid;
-  const faces=[["bottom",Math.abs(m[1]-r[1])],["top",Math.abs(m[1]-r[3])],["left",Math.abs(m[0]-r[0])],["right",Math.abs(m[0]-r[2])]];
+  const m=bestFit.mid,w=bestFit.w,h=bestFit.h;
+  /* Which way the zone bands run. Bands spanning the LONGER side keep the
+     electrical rooms alongside the full length of the halls, which shortens
+     busway runs and lets rack rows run the long way. "cross" overrides that. */
+  const spanIsW=(o.bandAxis==="cross")?(w<h):(w>=h);
+  const spanLen=spanIsW?w:h, stackLen=spanIsW?h:w;
+  const faces=[["bottom",Math.abs(m[1]-r[1])],["top",Math.abs(m[1]-r[3])],
+               ["left",Math.abs(m[0]-r[0])],["right",Math.abs(m[0]-r[2])]];
   faces.sort((x,y)=>x[1]-y[1]);
-  const front=faces[0][0], vertical=(front==="bottom"||front==="top");
-  const W=vertical?bestFit.w:bestFit.h;     /* along the frontage */
+  const front=faces[0][0];
+  /* the street either faces the flat side of the bands, or their ends */
+  const streetOnStack=spanIsW?(front==="bottom"||front==="top"):(front==="left"||front==="right");
+  const W=spanLen;
   let storeys=Math.max(1,Math.ceil(totalGfa/F)),bands=null;
   for(let guard=0;guard<60;guard++){
     const dock=Math.min(Math.max(350,W*10),F*0.2);
@@ -450,18 +462,40 @@ function solveInfill(o,poly,B,siteArea,angles){
   const hrNeed=d.hr*mw, roofCap=F*0.85;
   const plantFloors=Math.max(0,Math.ceil((hrNeed-roofCap)/F));
   const height=(storeys+plantFloors)*B.floorM+B.roofPlantM+1.5;
-  /* lay the zones out as bands running back from the frontage */
-  const order=[["apron",bands.dock,"Dock and freight core"],["admin",bands.admin,"Admin and lobby"],
-               ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]];
-  const zones=[];let acc=0;
-  for(const [kind,ar,name] of order){
-    const t=ar/W;
-    let q;
-    if(front==="bottom") q=[r[0],r[1]+acc,r[2],r[1]+acc+t];
-    else if(front==="top") q=[r[0],r[3]-acc-t,r[2],r[3]-acc];
-    else if(front==="left") q=[r[0]+acc,r[1],r[0]+acc+t,r[3]];
-    else q=[r[2]-acc-t,r[1],r[2]-acc,r[3]];
-    zones.push({r:q,kind:kind,name:name,area:ar});acc+=t;
+  const zones=[];
+  let hallDepth=0;
+  /* place a rectangle by span offset / stack offset, in the rect's own frame */
+  const put=(s0,s1,k0,k1,kind,name,ar)=>{
+    const q=spanIsW?[r[0]+s0,r[1]+k0,r[0]+s1,r[1]+k1]:[r[0]+k0,r[1]+s0,r[0]+k1,r[1]+s1];
+    zones.push({r:q,kind:kind,name:name,area:ar});};
+  /* stack runs away from the street when the street faces the bands */
+  const flipStack=(front==="top"||front==="right");
+  const K=(a,b)=>flipStack?[stackLen-b,stackLen-a]:[a,b];
+  const flipSpan=(front==="right"||front==="top");
+  const S=(a,b)=>flipSpan?[spanLen-b,spanLen-a]:[a,b];
+  if(streetOnStack){
+    /* dock, admin, halls, mechanical, electrical as bands back from the street */
+    let acc=0;
+    for(const [kind,ar,name] of [["apron",bands.dock,"Dock and freight core"],["admin",bands.admin,"Admin and lobby"],
+        ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]]){
+      const t=ar/spanLen, k=K(acc,acc+t);
+      if(kind==="hall") hallDepth=t;
+      put(0,spanLen,k[0],k[1],kind,name,ar); acc+=t;}
+  } else {
+    /* GRD pattern: dock and admin form an end block at the street, halls,
+       mechanical and electrical run lengthwise off it */
+    const endCol=(bands.dock+bands.admin)/stackLen;
+    const dockDepth=stackLen*bands.dock/(bands.dock+bands.admin);
+    const e=S(0,endCol);
+    const kd=K(0,dockDepth), ka=K(dockDepth,stackLen);
+    put(e[0],e[1],kd[0],kd[1],"apron","Dock and freight core",bands.dock);
+    put(e[0],e[1],ka[0],ka[1],"admin","Admin and lobby",bands.admin);
+    const rest=S(endCol,spanLen);
+    let acc=0;
+    for(const [kind,ar,name] of [["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]]){
+      const t=ar/(spanLen-endCol), k=K(acc,acc+t);
+      if(kind==="hall") hallDepth=t;
+      put(rest[0],rest[1],k[0],k[1],kind,name,ar); acc+=t;}
   }
   /* dock apron and access spur, in the strip between building and street */
   const ax=m[4]-m[2],ay=m[5]-m[3],al=Math.hypot(ax,ay)||1,ux=ax/al,uy=ay/al;
@@ -479,7 +513,8 @@ function solveInfill(o,poly,B,siteArea,angles){
   const spec={m:mw,dens:dens,kw:d.kw,racks:racks,hall:hall,gross:totalGfa,foot:F,adminFoot:0,
     ecFoot:ec,adminGfa:admin,roofHR:Math.min(hrNeed,roofCap),spill:Math.max(0,hrNeed-roofCap),
     liquid:d.liquid,rackKg:d.rackKg,pue:B.pue[o.profile][dens],height:height,
-    storeys:storeys,plantFloors:plantFloors,infill:true,
+    storeys:storeys,plantFloors:plantFloors,infill:true,hallDepth:hallDepth,bandAxis:(o.bandAxis||"auto"),
+    typicalHall:F-(admin+ec+crit)/storeys,
     apronDepth:depth,apronShort:depth<o.dockApron*0.6,W:W,D:F/W,bands:bands};
   const roads=[{a:[m[0],m[1]],b:dockC,w:Math.max(6,o.road*0.75),kind:"access"}];
   return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,dock:dockQuad,roads:roads,placed:[],
@@ -602,6 +637,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(infill){const s0=L[0];
     flags.push("The plan shows the ground floor. Upper floors carry more hall area once the dock and lobby are excluded.");
     flags.push("Infill massing: the building fills the plot and stacks "+s0.storeys+" floors"+(s0.plantFloors?" plus "+s0.plantFloors+" plant floor"+(s0.plantFloors>1?"s":""):"")+". Electrical and mechanical rooms sit inside the building.");
+    if(s0.hallDepth&&s0.hallDepth<12) flags.push("The ground-floor hall band is only "+fmt(s0.hallDepth,0)+" m deep, which takes "+Math.floor(s0.hallDepth/6)+" rack row at the GRD's 6 m pitch. Try the other zone band direction.");
     if(s0.apronShort) flags.push("Only "+fmt(s0.apronDepth,0)+" m of yard is available between the street and the building, short of a "+o.dockApron+" m apron, so the dock and ramp are shown inside the footprint as urban designs normally do.");
     flags.push("Stormwater retention and parking are not laid out in infill mode. Assume underground tanks and parking inside the building or off site.");
     if(s0.spill>0) flags.push("Heat rejection needs "+fmt(s0.spill,0)+" sqm more than the roof holds, so a plant floor is allowed for. Confirm with the mechanical engineer.");}
@@ -664,6 +700,7 @@ const $=id=>document.getElementById(id);
 const TIP={
 circulation:"How roads are generated. Internal runs a spine drive through the middle with buildings either side. Perimeter runs a service loop just inside the boundary with buildings in the centre. External runs parallel drives out to the boundary, which suits phased campus expansion. Compare all three shows one option of each.",
 dockApron:"Depth of hardstanding in front of the loading dock for a truck to reverse and turn. The GRD puts two truck docks at the ground floor of the admin block, so this apron sits alongside it.",
+bandAxis:"Which way the zones inside an infill building run. Lengthwise keeps the electrical and mechanical rooms along the full length of the halls, which shortens busway runs and lets rack rows run the long way, as the GRD does. Crosswise turns them through 90 degrees: useful for testing a frontage or a phasing split, but it usually costs hall capacity. Campus layouts always run lengthwise.",
 circRow:"The circulation pattern used and the angle the blocks were rotated to.",
 docksRow:"Truck docks across the site. The GRD provides two per facility, at the admin block ground floor with direct access to the freight lifts.",
 roadRow:"Area of service roads, gates and hardstanding. The GRD uses an 8 m two-way service road, with 4 m the absolute minimum, and keeps 15 m clear around external electrical and mechanical yards.",
@@ -870,6 +907,7 @@ seg("segProfile","profile",applyDefaults); seg("segElec","elec",()=>schedule(fal
 $("density").onchange=e=>{state.density=e.target.value;applyDensity();};
 $("circulation").onchange=()=>schedule(false);
 $("massing").onchange=()=>schedule(false);
+$("bandAxis").onchange=()=>schedule(false);
 $("faceGate").onchange=()=>schedule(false);
 
 /* ----- building mix ----- */
@@ -899,7 +937,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
-    massing:$("massing").value,faceGate:$("faceGate").checked,
+    massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,
     mix:state.mix.length?state.mix.slice():null,supportSqm:B.profile[state.profile].supportSqm||2000};}
 
 /* ===== Map ===== */
@@ -1175,11 +1213,11 @@ $("btnPNG").onclick=()=>{if(!state.result)return;
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
-  return {app:"dccg",v:3,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:4,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
-  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";
+  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";
   $("faceGate").checked=p.faceGate!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
