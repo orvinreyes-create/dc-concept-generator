@@ -52,7 +52,9 @@ summary{cursor:pointer;font:600 16px "Barlow Condensed",sans-serif;padding:4px 0
 .vtx.sel{background:#B03A2E;border-color:#fff}
 .mid{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.85);border:2px dashed #0F6E8C;cursor:copy}
 .move{width:26px;height:26px;border-radius:50%;background:#0F6E8C;color:#fff;display:grid;place-items:center;font-size:15px;cursor:move;box-shadow:0 0 0 2px #fff}
-.dim{font:600 11px "Barlow Condensed",sans-serif;color:#0F6E8C;background:rgba(255,255,255,.88);border:1px solid rgba(15,110,140,.45);padding:0 4px;border-radius:3px;pointer-events:none;white-space:nowrap}
+.dim{font:600 11px "Barlow Condensed",sans-serif;color:#0F6E8C;background:rgba(255,255,255,.88);border:1px solid rgba(15,110,140,.45);padding:1px 5px;border-radius:3px;white-space:nowrap;cursor:pointer}
+.dim:hover{border-color:#0F6E8C;background:#fff}
+.dim.chosen{background:#D97742;border-color:#B35F2E;color:#fff}
 .lbl{font:600 12px "Barlow Condensed",sans-serif;color:#1D2B36;background:rgba(255,255,255,.8);padding:1px 4px;border-radius:3px;pointer-events:none;white-space:nowrap}
 .big{font:600 32px/1 "Barlow Condensed",sans-serif}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -160,6 +162,7 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
     <div><label for="storeys">Storeys</label><input id="storeys" type="number" min="1" max="8"></div>
   </div>
   <p class="hint">Take setbacks, height and coverage from the city zoning ordinance and the National Building Code.</p>
+  <p class="hint">Click a length on the map to make that edge the street, which sets where the gates and the loading dock go. Click it again for automatic, which uses the longest edge.</p>
 
   <details>
     <summary>Import a boundary</summary>
@@ -356,10 +359,17 @@ function rectSeg(r,s){
   if(pip(s.a[0],s.a[1],C)||pip(s.b[0],s.b[1],C)) return 0;
   return m;}
 function roadArea(segs){return segs.reduce((t,s)=>t+segLen(s)*s.w,0);}
-function gateFor(P,segs){
-  let best=null,bl=0;
-  for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length],l=Math.hypot(b[0]-a[0],b[1]-a[1]);
-    if(l>bl){bl=l;best=[(a[0]+b[0])/2,(a[1]+b[1])/2];}}
+/* The street is the edge the user picked, or the longest edge when they have not. */
+function frontEdge(P,fp){
+  let best=null,score=-1;
+  for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];
+    const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2];
+    const v=fp?-Math.hypot(mid[0]-fp[0],mid[1]-fp[1]):Math.hypot(b[0]-a[0],b[1]-a[1]);
+    if(v>score){score=v;best=[mid[0],mid[1],a[0],a[1],b[0],b[1]];}}
+  return best;}
+function gateFor(P,segs,fp){
+  const fe=frontEdge(P,fp);
+  const best=fe?[fe[0],fe[1]]:null;
   if(!best||!segs.length) return null;
   let node=null,bd=1e9;
   for(const s of segs){for(const t of [0,0.25,0.5,0.75,1]){
@@ -412,9 +422,8 @@ function solveInfill(o,poly,B,siteArea,angles){
     const inner=insetPoly(P,o.setback);
     if(Math.abs(polyArea(inner))<400) continue;
     /* the street is the longest boundary edge; keep an apron strip clear of it */
-    let mid=null,bl=0;
-    for(let i=0;i<P.length;i++){const u=P[i],v=P[(i+1)%P.length],l=Math.hypot(v[0]-u[0],v[1]-u[1]);
-      if(l>bl){bl=l;mid=[(u[0]+v[0])/2,(u[1]+v[1])/2,u[0],u[1],v[0],v[1]];}}
+    const mid=frontEdge(P,o.frontPoint?rot(o.frontPoint,-ang):null);
+    if(!mid) continue;
     const cell=Math.max(1.5,Math.sqrt(siteArea)/55);
     {
       let r=largestRect(inner,cell,null);
@@ -589,7 +598,7 @@ function solve(o,poly,B,coarse,hintDeg){
     const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,!coarse);
     const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,!coarse);
     const cov=built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
-    const ra=roadArea(roads),gate=gateFor(P,roads);
+    const ra=roadArea(roads),gate=gateFor(P,roads,o.frontPoint?rot(o.frontPoint,-a):null);
     /* GRD: the building entrance faces the main gate where feasible. The envelope
        stays put; the admin and dock columns are mirrored to the side nearest the gate. */
     if(o.faceGate!==false&&gate) for(const pl of placed){
@@ -893,7 +902,7 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
   status("Template downloaded. Replace the values, keep the parameter names, then import it.");};
 
 /* ===== State and form ===== */
-const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[]};
+const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null};
 const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
@@ -937,7 +946,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
-    massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,
+    massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,frontLL:state.frontLL,
     mix:state.mix.length?state.mix.slice():null,supportSqm:B.profile[state.profile].supportSqm||2000};}
 
 /* ===== Map ===== */
@@ -1090,6 +1099,7 @@ function runSolve(coarse){
   if(state.ring.length<3||state.drawing) {renderEmpty();return;}
   const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=activeBOD();
+  o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
   const res=solve(o,poly,B,coarse,state.lastDeg);
   if(!res.options.length) return;
   state.result=res;state.F=F;state.o=o;
@@ -1168,7 +1178,16 @@ function renderLayout(){
       if(L<8) continue;
       const mx=(p1[0]+p2[0])/2,my=(p1[1]+p2[1])/2;
       const vx=mx-cen[0],vy=my-cen[1],vl=Math.hypot(vx,vy)||1;
-      const el=document.createElement("div");el.className="dim";el.textContent=fmt(L,1)+" m";
+      const llMid=Fm.toLL([mx,my]);
+      const chosen=state.frontLL&&Math.hypot(llMid[0]-state.frontLL[0],llMid[1]-state.frontLL[1])<1e-5;
+      const el=document.createElement("button");el.type="button";
+      el.className="dim"+(chosen?" chosen":"");
+      el.textContent=fmt(L,1)+" m"+(chosen?" · street":"");
+      el.title=chosen?"This edge is the street. Click to go back to automatic.":"Make this edge the street, entry and exit";
+      el.onclick=ev=>{ev.stopPropagation();
+        state.frontLL=chosen?null:llMid;
+        status(chosen?"Street frontage back to automatic.":"Street frontage set to the "+fmt(L,1)+" m edge.");
+        schedule(false);persist();};
       labels.push(new maplibregl.Marker({element:el}).setLngLat(Fm.toLL([mx+vx/vl*off,my+vy/vl*off])).addTo(map));}}
   if(op.gate){const el=document.createElement("div");el.className="lbl";el.style.background="rgba(217,119,66,.92)";el.style.color="#fff";
     el.textContent=op.infill?"Street access":"Entry and exit gates";
@@ -1213,11 +1232,11 @@ $("btnPNG").onclick=()=>{if(!state.result)return;
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
-  return {app:"dccg",v:4,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:5,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
-  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";
+  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";state.frontLL=p.frontLL||null;
   $("faceGate").checked=p.faceGate!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
