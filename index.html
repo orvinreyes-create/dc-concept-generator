@@ -274,58 +274,87 @@ function buildingSpec(m,o,B,dens){
     pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM:0)+1.5};
 }
 
-/* ===== circulation skeleton =====
-   internal  - spine drive through the middle, buildings either side
-   perimeter - service loop inside the boundary, buildings in the centre
-   external  - parallel drives across the site, each running out to the boundary */
-function skeletonRaw(type,P,bb,o,pitch,inset){
-  const w=o.road,m=inset,[x0,y0,x1,y1]=bb,segs=[];
-  const W=x1-x0,H=y1-y0,horiz=W>=H;
-  const add=(a,b,c,d,kind)=>{if(c-a>1&&d-b>1)segs.push({r:[a,b,c,d],kind:kind});};
-  const loop=(inset)=>{const a=x0+inset,b=y0+inset,c=x1-inset,d=y1-inset;
-    add(a,b,c,b+w,"loop");add(a,d-w,c,d,"loop");add(a,b,a+w,d,"loop");add(c-w,b,c,d,"loop");};
-  if(type==="perimeter"){ loop(m); }
-  else if(type==="external"){
-    loop(m);
-    const span=horiz?W-2*m:H-2*m,n=Math.max(1,Math.floor(span/pitch));
-    for(let i=1;i<=n;i++){const t=(horiz?x0:y0)+m+span*i/(n+1);
-      if(horiz) add(t-w/2,y0+m,t+w/2,y1-m,"drive"); else add(x0+m,t-w/2,x1-m,t+w/2,"drive");}
-  } else {
-    const cx=(x0+x1)/2,cy=(y0+y1)/2;
-    if(horiz) add(x0+m,cy-w/2,x1-m,cy+w/2,"spine"); else add(cx-w/2,y0+m,cx+w/2,y1-m,"spine");
-    const span=horiz?W-2*m:H-2*m,n=Math.max(1,Math.round(span/pitch));
-    for(let i=0;i<=n;i++){const t=(horiz?x0:y0)+m+span*i/n;
-      if(horiz) add(t-w/2,y0+m,t+w/2,y1-m,"branch"); else add(x0+m,t-w/2,x1-m,t+w/2,"branch");}
-  }
-  return segs;}
-function clipSegs(segs,P,o){
-  const out=[];
-  for(const s of segs){
-    const r=s.r,long=(r[2]-r[0])>=(r[3]-r[1]);
-    const len=long?r[2]-r[0]:r[3]-r[1],step=12,n=Math.max(1,Math.round(len/step));
-    let run=null;
-    for(let i=0;i<n;i++){
-      const a=(long?r[0]:r[1])+len*i/n,b=(long?r[0]:r[1])+len*(i+1)/n;
-      const piece=long?[a,r[1],b,r[3]]:[r[0],a,r[2],b];
-      if(rectFits(piece,P,o.setback)){ if(run) run[long?2:3]=b; else run=piece.slice(); }
-      else { if(run&&(run[2]-run[0])*(run[3]-run[1])>0){out.push({r:run,kind:s.kind});} run=null; }
-    }
-    if(run) out.push({r:run,kind:s.kind});
-  }
+/* ===== circulation =====
+   Roads are centrelines that follow the site's own inset boundary, so the
+   network stays inside the lot and the drives meet the loop.
+   internal  - spine through the middle with branch drives
+   perimeter - service loop just inside the boundary
+   external  - loop plus parallel drives running out to the boundary */
+function lineInt(a,b,c,d){
+  const x1=a[0],y1=a[1],x2=b[0],y2=b[1],x3=c[0],y3=c[1],x4=d[0],y4=d[1];
+  const den=(x1-x2)*(y3-y4)-(y1-y2)*(x3-x4);
+  if(Math.abs(den)<1e-9) return null;
+  const t=((x1-x3)*(y3-y4)-(y1-y3)*(x3-x4))/den;
+  return [x1+t*(x2-x1),y1+t*(y2-y1)];}
+function insetPoly(P,d){
+  const n=P.length,out=[];
+  const off=(a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy)||1,nx=-dy/l*d,ny=dx/l*d;
+    return [[a[0]+nx,a[1]+ny],[b[0]+nx,b[1]+ny]];};
+  for(let i=0;i<n;i++){
+    const A=off(P[(i-1+n)%n],P[i]),Bb=off(P[i],P[(i+1)%n]);
+    const ip=lineInt(A[0],A[1],Bb[0],Bb[1]);
+    out.push(ip||A[1]);}
   return out;}
-function skeleton(type,P,bb,o,pitch){
-  let best=[],bestLen=-1;
-  for(const extra of [1,10,22,38]){
-    const segs=clipSegs(skeletonRaw(type,P,bb,o,pitch,o.setback+extra),P,o);
-    const len=segs.reduce((t,c)=>t+area(c.r),0);
-    if(len>bestLen){bestLen=len;best=segs;}
-    if(len>0&&extra>=10&&segs.length>=(type==="perimeter"?4:3)) break;}
-  return best;}
+/* spans of segment a->b that lie inside polygon P */
+function clipLine(P,a,b){
+  const ts=[0,1];
+  for(let i=0;i<P.length;i++){
+    const c=P[i],d=P[(i+1)%P.length];
+    const den=(b[0]-a[0])*(d[1]-c[1])-(b[1]-a[1])*(d[0]-c[0]);
+    if(Math.abs(den)<1e-9) continue;
+    const t=((c[0]-a[0])*(d[1]-c[1])-(c[1]-a[1])*(d[0]-c[0]))/den;
+    const u=((c[0]-a[0])*(b[1]-a[1])-(c[1]-a[1])*(b[0]-a[0]))/den;
+    if(t>0&&t<1&&u>=0&&u<=1) ts.push(t);}
+  ts.sort((x,y)=>x-y);
+  const out=[];
+  for(let i=0;i<ts.length-1;i++){
+    const m=(ts[i]+ts[i+1])/2,p=[a[0]+m*(b[0]-a[0]),a[1]+m*(b[1]-a[1])];
+    if(pip(p[0],p[1],P)&&ts[i+1]-ts[i]>1e-3) out.push([ts[i],ts[i+1]]);}
+  return out.map(([t0,t1])=>[[a[0]+t0*(b[0]-a[0]),a[1]+t0*(b[1]-a[1])],[a[0]+t1*(b[0]-a[0]),a[1]+t1*(b[1]-a[1])]]);}
+function segLen(s){return Math.hypot(s.b[0]-s.a[0],s.b[1]-s.a[1]);}
+function skeleton(type,P,o,pitch){
+  const w=o.road,inner=insetPoly(P,o.setback+w/2+1);
+  const segs=[];
+  const addLine=(a,b,kind)=>{for(const sp of clipLine(inner,a,b)){
+    if(Math.hypot(sp[1][0]-sp[0][0],sp[1][1]-sp[0][1])>w) segs.push({a:sp[0],b:sp[1],w:w,kind:kind});}};
+  if(type!=="internal"){ for(let i=0;i<inner.length;i++) segs.push({a:inner[i],b:inner[(i+1)%inner.length],w:w,kind:"loop"}); }
+  if(type!=="perimeter"){
+    const xs=inner.map(p=>p[0]),ys=inner.map(p=>p[1]);
+    const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+    const horiz=(x1-x0)>=(y1-y0),cx=(x0+x1)/2,cy=(y0+y1)/2;
+    if(type==="internal"){
+      if(horiz) addLine([x0-10,cy],[x1+10,cy],"spine"); else addLine([cx,y0-10],[cx,y1+10],"spine");
+      const span=horiz?x1-x0:y1-y0,n=Math.max(1,Math.round(span/pitch));
+      for(let i=0;i<=n;i++){const t=(horiz?x0:y0)+span*i/n;
+        if(horiz) addLine([t,y0-10],[t,y1+10],"branch"); else addLine([x0-10,t],[x1+10,t],"branch");}
+    } else {
+      const span=horiz?x1-x0:y1-y0,n=Math.max(1,Math.floor(span/pitch));
+      for(let i=1;i<=n;i++){const t=(horiz?x0:y0)+span*i/(n+1);
+        if(horiz) addLine([t,y0-10],[t,y1+10],"drive"); else addLine([x0-10,t],[x1+10,t],"drive");}}}
+  return segs;}
+/* distance from an axis-aligned rect to a road centreline */
+function rectSeg(r,s){
+  const C=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]];
+  let m=Infinity;
+  for(let i=0;i<4;i++) m=Math.min(m,segSeg(C[i],C[(i+1)%4],s.a,s.b));
+  if(m===0) return 0;
+  if(pip(s.a[0],s.a[1],C)||pip(s.b[0],s.b[1],C)) return 0;
+  return m;}
+function roadArea(segs){return segs.reduce((t,s)=>t+segLen(s)*s.w,0);}
+function gateFor(P,segs){
+  let best=null,bl=0;
+  for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length],l=Math.hypot(b[0]-a[0],b[1]-a[1]);
+    if(l>bl){bl=l;best=[(a[0]+b[0])/2,(a[1]+b[1])/2];}}
+  if(!best||!segs.length) return null;
+  let node=null,bd=1e9;
+  for(const s of segs){for(const t of [0,0.25,0.5,0.75,1]){
+    const p=[s.a[0]+t*(s.b[0]-s.a[0]),s.a[1]+t*(s.b[1]-s.a[1])],d=Math.hypot(p[0]-best[0],p[1]-best[1]);
+    if(d<bd){bd=d;node=p;}}}
+  return node?{edge:best,node:node,w:6}:null;}
 
 function solve(o,poly,B,coarse,hintDeg){
   if(polyArea(poly)<0) poly=poly.slice().reverse();
   const siteArea=Math.abs(polyArea(poly));
-  /* building programme: explicit mix, or one density for the whole target */
   const mix=(o.mix&&o.mix.length)?o.mix:null;
   const specs=[];
   if(mix){ for(const b of mix) specs.push(buildingSpec(b.mw,o,B,b.dens)); }
@@ -336,48 +365,63 @@ function solve(o,poly,B,coarse,hintDeg){
   const subArea=facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20;
   const pondArea=siteArea*o.pond/100, supportArea=o.supportSqm;
   const pitch=Math.max(...specs.map(s=>Math.max(s.Lm,s.H)))+2*YARD_CLEAR+o.road;
-
+  /* buildings line up with the site edges, so only edge-derived angles are tried */
   const angs=new Set();
-  for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];let t=Math.atan2(b[1]-a[1],b[0]-a[0]);t=((t%(Math.PI/2))+Math.PI/2)%(Math.PI/2);angs.add(Math.round(t*180/Math.PI)%90);}
-  if(coarse){ if(hintDeg!=null) angs.add(hintDeg); } else for(let d=0;d<90;d+=15) angs.add(d);
+  for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];
+    if(Math.hypot(b[0]-a[0],b[1]-a[1])<Math.sqrt(siteArea)*0.12) continue;
+    let t=Math.atan2(b[1]-a[1],b[0]-a[0]);t=((t%(Math.PI/2))+Math.PI/2)%(Math.PI/2);
+    angs.add(Math.round(t*180/Math.PI)%90);}
+  if(!angs.size) angs.add(0);
+  if(coarse&&hintDeg!=null&&angs.has(hintDeg)) {angs.clear();angs.add(hintDeg);}
   const types=o.circulation==="auto"?["internal","perimeter","external"]:[o.circulation];
   const res=[];
   for(const deg of angs) for(const type of types){
     const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
     const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
     const bb=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
-    const roads=skeleton(type,P,bb,o,pitch);
+    const roads=skeleton(type,P,o,pitch);
     if(!roads.length) continue;
-    const placed=[],step=Math.max(4,Math.sqrt(siteArea)/90)*(coarse?2.2:1);
+    const placed=[],step=Math.max(4,Math.sqrt(siteArea)/85)*(coarse?2.2:1);
     const free=(r,clear)=>{
       if(!rectFits(r,P,o.setback)) return false;
       for(const q of placed) if(hit(r,q.r)) return false;
-      for(const c of roads) if(hit(r,c.r)) return false;
-      if(clear!=null){ let near=false;
-        for(const c of roads){ if(rectGap(r,c.r)<=clear){near=true;break;} }
-        if(!near) return false; }
-      return true;};
-    const tryPlace=(w,h,kind,meta,swap,clear)=>{
+      let near=false;
+      for(const s of roads){const d=rectSeg(r,s);
+        if(d<s.w/2+1) return false;
+        if(clear!=null&&d<=s.w/2+clear) near=true;}
+      return clear==null?true:near;};
+    /* spread: pick the fitting position furthest from what is already placed,
+       so buildings line the drives instead of piling into one corner */
+    const spreadScore=r=>{
+      let d=1e9;
+      for(const q of placed){const dx=Math.max(0,Math.max(q.r[0]-r[2],r[0]-q.r[2])),dy=Math.max(0,Math.max(q.r[1]-r[3],r[1]-q.r[3]));
+        d=Math.min(d,Math.hypot(dx,dy));}
+      return d===1e9?0:Math.min(d,pitch);};
+    const tryPlace=(w,h,kind,meta,swap,clear,spread)=>{
+      let best=null,bestScore=-1;
       for(let y=bb[1];y<=bb[3];y+=step) for(let x=bb[0];x<=bb[2];x+=step){
         for(const [ww,hh,sw] of (swap?[[w,h,false],[h,w,true]]:[[w,h,false]])){
           const r=[x,y,x+ww,y+hh];
           if(r[2]>bb[2]||r[3]>bb[3]) continue;
           if(!free(r,clear)) continue;
-          placed.push({r,kind,meta:Object.assign({swap:sw},meta)});return true;}}
+          if(!spread||!placed.length){placed.push({r,kind,meta:Object.assign({swap:sw},meta)});return true;}
+          const sc=spreadScore(r);
+          if(sc>bestScore){bestScore=sc;best={r,kind,meta:Object.assign({swap:sw},meta)};}
+          if(bestScore>=pitch){placed.push(best);return true;}}}
+      if(best){placed.push(best);return true;}
       return false;};
     const subS=Math.sqrt(subArea);
-    const subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road);
+    const subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,!coarse);
     let mw=0;const built=[];
     for(let i=0;i<specs.length;i++){const s=specs[i];
       const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
-      if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,o.road+2)){mw+=s.m;built.push(s);} else break;}
-    const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null);
-    const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+2);
+      if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,o.road+4,!coarse)){mw+=s.m;built.push(s);} else break;}
+    const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,!coarse);
+    const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,!coarse);
     const cov=built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
-    const roadArea=roads.reduce((t,c)=>t+area(c.r),0);
-    const gate=gatePoint(P,bb,roads);
-    res.push({deg,a,type,roads,placed,mw,built,subOK,pondOK,supOK,cov,specs,gate,roadArea,targetMW,
-      score:mw*1e6+(subOK?4e5:0)+(pondOK?2e5:0)+(supOK?1e5:0)-roadArea*0.5});
+    const ra=roadArea(roads),gate=gateFor(P,roads);
+    res.push({deg,a,type,roads,placed,mw,built,subOK,pondOK,supOK,cov,specs,gate,roadArea:ra,targetMW,
+      score:mw*1e6+(subOK?4e5:0)+(pondOK?2e5:0)+(supOK?1e5:0)-ra*0.4});
   }
   res.sort((p,q)=>q.score-p.score);
   const top=[],usedType=new Set();
@@ -387,19 +431,6 @@ function solve(o,poly,B,coarse,hintDeg){
     if(top.some(t=>t.type===r.type&&t.deg===r.deg)) continue;
     if(top.length&&r.mw<top[0].mw*0.5) continue; top.push(r);}
   return {options:top.map(r=>summarise(r,o,B,siteArea,subArea,pondArea,supportArea)),siteArea};
-}
-/* entry and exit gates sit where the road network meets the longest boundary edge */
-function gatePoint(P,bb,roads){
-  let best=null,bl=0;
-  for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length],l=Math.hypot(b[0]-a[0],b[1]-a[1]);
-    if(l>bl){bl=l;best=[(a[0]+b[0])/2,(a[1]+b[1])/2];}}
-  if(!best) return null;
-  let node=null,bd=1e9;
-  for(const c of roads){const cx=(c.r[0]+c.r[2])/2,cy=(c.r[1]+c.r[3])/2,d=Math.hypot(cx-best[0],cy-best[1]);
-    if(d<bd){bd=d;node=[cx,cy];}}
-  if(!node) return null;
-  const dx=best[0]-node[0],dy=best[1]-node[1],l=Math.hypot(dx,dy)||1,px=-dy/l*4,py=dx/l*4;
-  return {edge:best,node:node,quad:[[node[0]+px,node[1]+py],[best[0]+px,best[1]+py],[best[0]-px,best[1]-py],[node[0]-px,node[1]-py]]};
 }
 
 function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
@@ -868,36 +899,38 @@ function clearLabels(){labels.forEach(m=>m.remove());labels=[];}
 function renderLayout(){
   const op=state.result.options[state.opt],o=state.o,F=state.F,feats=[];clearLabels();
   const toLL=(x,y)=>F.toLL(rot([x,y],op.a));
-  const quad=(pts,kind,label)=>{const ring=pts.map(p=>toLL(p[0],p[1]));ring.push(ring[0]);
+  const minLabel=state.result.siteArea*0.004;   /* hide labels on slivers */
+  const quad=(pts,kind,label,a)=>{const ring=pts.map(p=>toLL(p[0],p[1]));ring.push(ring[0]);
     feats.push({type:"Feature",properties:{kind:kind},geometry:{type:"Polygon",coordinates:[ring]}});
-    if(label){const c=pts.reduce((t,p)=>[t[0]+p[0]/pts.length,t[1]+p[1]/pts.length],[0,0]);
+    if(label&&(a===undefined||a>=minLabel)){const c=pts.reduce((t,p)=>[t[0]+p[0]/pts.length,t[1]+p[1]/pts.length],[0,0]);
       const el=document.createElement("div");el.className="lbl";el.innerHTML=label;
       labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(c[0],c[1])).addTo(map));}};
-  const box=(q,kind,label)=>quad([[q[0],q[1]],[q[2],q[1]],[q[2],q[3]],[q[0],q[3]]],kind,label);
+  const box=(q,kind,label,a)=>quad([[q[0],q[1]],[q[2],q[1]],[q[2],q[3]],[q[0],q[3]]],kind,label,a);
+  const strip=(a,b,w,kind)=>{const dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy)||1,px=-dy/l*w/2,py=dx/l*w/2;
+    quad([[a[0]+px,a[1]+py],[b[0]+px,b[1]+py],[b[0]-px,b[1]-py],[a[0]-px,a[1]-py]],kind,null);};
   const sq=a=>fmt(Math.round(a),0)+" sqm";
-  const tag=(name,a)=>name+'<br><span style="font-weight:400;opacity:.75">'+sq(a)+"</span>";
-  /* circulation first, so buildings read as sitting against the roads */
-  for(const c of op.roads) box(c.r,"road",null);
-  if(op.gate&&op.gate.quad) quad(op.gate.quad,"road",null);
+  const tag=(n,a)=>n+'<br><span style="font-weight:400;opacity:.75">'+sq(a)+"</span>";
+  for(const c of op.roads) strip(c.a,c.b,c.w,"road");
+  if(op.gate) strip(op.gate.node,op.gate.edge,op.gate.w,"road");
   for(const pl of op.placed){
     const r=pl.r,m=pl.meta;
-    if(pl.kind==="sub"){box(r,"sub",tag("Substation",m.area));continue;}
-    if(pl.kind==="pond"){box(r,"pond",tag("Retention",m.area));continue;}
-    if(pl.kind==="support"){box(r,"support",tag("Parking and yards",m.area));continue;}
+    if(pl.kind==="sub"){box(r,"sub",tag("Substation",m.area),m.area);continue;}
+    if(pl.kind==="pond"){box(r,"pond",tag("Retention",m.area),m.area);continue;}
+    if(pl.kind==="support"){box(r,"support",tag("Parking and yards",m.area),m.area);continue;}
     const s=m.s,ix=r[0]+(m.swap?m.padTop:m.padX),iy=r[1]+(m.swap?m.padX:m.padTop);
-    const part=(u0,v0,u1,v1,kind,label)=>box(m.swap?[ix+v0,iy+u0,ix+v1,iy+u1]:[ix+u0,iy+v0,ix+u1,iy+v1],kind,label);
-    if(s.Yd>0) part(s.La,0,s.Lm,s.Yd,"yard",tag("Heat rejection",s.spill));
-    part(s.La,s.Yd,s.Lm,s.Yd+s.D,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D));
-    part(s.La,s.Yd+s.D,s.Lm,s.Yd+s.D+s.Ed,"ec",tag("Energy centre",s.ecFoot));
-    part(0,0,s.La,s.apron,"apron",tag("Loading dock",s.La*s.apron));
-    part(0,s.apron,s.La,s.apron+s.D,"admin",tag("Admin",s.adminFoot));
+    const part=(u0,v0,u1,v1,kind,label,a)=>box(m.swap?[ix+v0,iy+u0,ix+v1,iy+u1]:[ix+u0,iy+v0,ix+u1,iy+v1],kind,label,a);
+    if(s.Yd>0) part(s.La,0,s.Lm,s.Yd,"yard",tag("Heat rejection",s.spill),s.spill);
+    part(s.La,s.Yd,s.Lm,s.Yd+s.D,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D),s.L*s.D);
+    part(s.La,s.Yd+s.D,s.Lm,s.Yd+s.D+s.Ed,"ec",tag("Energy centre",s.ecFoot),s.ecFoot);
+    part(0,0,s.La,s.apron,"apron",tag("Loading dock",s.La*s.apron),s.La*s.apron);
+    part(0,s.apron,s.La,s.apron+s.D,"admin",tag("Admin",s.adminFoot),s.adminFoot);
   }
-  map.getSource("layout")&&map.getSource("layout").setData({type:"FeatureCollection",features:feats});
-  state.layoutGeo=feats;
+  const src=map.getSource("layout");
+  if(src) src.setData({type:"FeatureCollection",features:feats});
+  state.layoutGeo=feats;state.pendingLayout=!src;
   if(op.gate){const el=document.createElement("div");el.className="lbl";el.style.background="rgba(217,119,66,.92)";el.style.color="#fff";
     el.textContent="Entry and exit gates";
     labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(op.gate.edge[0],op.gate.edge[1])).addTo(map));}
-  state.pendingLayout=!map.getSource("layout");
 }
 function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
   $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${o.targetMW}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${fmt(op.cov,0)}%</b><small>coverage</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
