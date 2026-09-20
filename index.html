@@ -65,6 +65,12 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 .banner{font-size:12.5px;color:var(--warn);border:1px dashed var(--warn);padding:6px 8px;border-radius:4px;margin:8px 0}
 .legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12.5px;color:var(--muted);margin-top:10px}
 .legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px;background:var(--c)}
+h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.reset{font:500 12px Barlow,sans-serif;color:var(--accent);background:none;border:0;border-bottom:1px solid transparent;
+  padding:0 0 1px;cursor:pointer;flex:0 0 auto}
+.reset:hover{border-bottom-color:var(--accent)}
+.reset:disabled{color:var(--muted);cursor:default;border-bottom-color:transparent}
+.reset.block{display:block;width:100%;text-align:left;margin:2px 0 6px;font-size:13px}
 .chk{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink);margin:9px 0 3px}
 .chk input{width:auto}
 .projects{list-style:none;padding:0;margin:8px 0 0;font-size:14px}
@@ -108,7 +114,7 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
   <p class="hint">A profile is a spreadsheet of design values. Export the CSV, edit it in Excel, then import it back.</p>
   <input type="file" id="bodFile" accept=".csv,.json,text/csv,application/json" hidden>
 
-  <h2>Profile</h2>
+  <h2>Profile<button class="reset" id="resetProfile" type="button">Reset</button></h2>
   <label id="lbl-typology">Site typology</label>
   <div class="seg" id="segProfile"><button data-v="metro" aria-pressed="true">Metro</button><button data-v="campus" aria-pressed="false">Campus</button></div>
   <label for="density">Rack density</label>
@@ -152,7 +158,7 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
   </div>
   <p class="hint" id="mixNote"></p>
 
-  <h2>Site rules</h2>
+  <h2>Site rules<button class="reset" id="resetRules" type="button">Reset</button></h2>
   <div class="row">
     <div><label for="setback">Setback (m)</label><input id="setback" type="number" min="0" step="0.5"></div>
     <div><label for="maxH">Height limit (m)</label><input id="maxH" type="number" min="5"></div>
@@ -177,6 +183,7 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 
   <details>
     <summary>Adjust design values</summary>
+    <button class="reset block" id="resetValues" type="button">Reset design values to the profile</button>
     <div class="row">
       <div><label for="sqmRack">Hall sqm per rack</label><input id="sqmRack" type="number" step="0.1"></div>
       <div><label for="pue">Design PUE</label><input id="pue" type="number" step="0.01"></div>
@@ -876,7 +883,7 @@ function drawBOD(){
   if(act.placeholder){pill.className="pill placeholder";pill.textContent="Using placeholder values. Import your profile before screening real sites.";}
   else{pill.className="pill";pill.textContent=`Profile: ${act.name} (imported ${new Date(act.importedAt).toLocaleDateString("en-PH",{day:"numeric",month:"short",year:"numeric"})})`;}
 }
-$("bodSelect").onchange=e=>{localStorage.setItem(LS_ACTIVE,e.target.value);drawBOD();applyDefaults();};
+$("bodSelect").onchange=e=>{localStorage.setItem(LS_ACTIVE,e.target.value);drawBOD();applyDefaults();refreshResets();};
 $("bodImport").onclick=()=>$("bodFile").click();
 $("bodFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;
   try{const text=await f.text();
@@ -885,7 +892,7 @@ $("bodFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;
     if(!p.name||p.name===PLACEHOLDER.name) p.name=f.name.replace(/\.(csv|json)$/i,"");
     const list=profiles().filter(x=>x.name!==p.name);list.push(p);
     if(!lsSet(LS_BOD,list)) throw new Error("This browser blocked storage. Private browsing may be on.");
-    localStorage.setItem(LS_ACTIVE,p.id);drawBOD();applyDefaults();status("Imported profile "+p.name+".");}
+    localStorage.setItem(LS_ACTIVE,p.id);drawBOD();applyDefaults();refreshResets();status("Imported profile "+p.name+".");}
   catch(err){status("Import failed: "+err.message);} e.target.value="";};
 function currentProfileCopy(){const B=activeBOD(),o=readOpts(),copy=JSON.parse(JSON.stringify(B));
   delete copy.placeholder;delete copy.id;delete copy.importedAt;copy.name=B.placeholder?"My basis of design":B.name;
@@ -908,9 +915,54 @@ function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
   s("dockApron",B.dockApron||30);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
   applyDensity();}
+/* Put one group of fields back to the values in the active basis of design. */
+const RESET_GROUPS={
+  profile:["targetMW","kw"],
+  rules:["setback","maxH","maxCov","storeys"],
+  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron"]
+};
+function profileValue(id){
+  const B=activeBOD(),P=B.profile[state.profile],D=B.density[state.density];
+  switch(id){
+    case "targetMW": return P.targetMW;
+    case "setback": return P.setback;
+    case "maxH": return P.maxH;
+    case "maxCov": return P.maxCov;
+    case "storeys": return P.storeys;
+    case "bldgMax": return P.bldgMax;
+    case "pondPct": return P.pond;
+    case "roadW": return P.road;
+    case "dockApron": return B.dockApron;
+    case "kw": return D.kw;
+    case "sqmRack": return D.sqmRack;
+    case "liquid": return D.liquid;
+    case "rackKg": return D.rackKg;
+    case "hrPerMW": return D.hr;
+    case "pue": return B.pue[state.profile][state.density];
+  }
+  return null;}
+function groupChanged(g){
+  return RESET_GROUPS[g].some(id=>{const v=profileValue(id);
+    return v!=null&&String(v)!==String($(id).value);});}
+function refreshResets(){
+  ["profile","rules","values"].forEach(g=>{
+    const b=$({profile:"resetProfile",rules:"resetRules",values:"resetValues"}[g]);
+    if(!b) return;
+    const changed=groupChanged(g);
+    b.disabled=!changed;
+    b.title=changed?"Put these back to the values in "+activeBOD().name:"Already matches "+activeBOD().name;});}
+function resetGroup(g,label){
+  RESET_GROUPS[g].forEach(id=>{const v=profileValue(id);if(v!=null)$(id).value=v;});
+  if(g==="profile"&&state.mix.length){state.mix=[];drawMix();}
+  status(label+" reset to "+activeBOD().name+".");
+  schedule(false);persist();refreshResets();}
+$("resetProfile").onclick=()=>resetGroup("profile","Profile");
+$("resetRules").onclick=()=>resetGroup("rules","Site rules");
+$("resetValues").onclick=()=>resetGroup("values","Design values");
+
 function applyDensity(){const B=activeBOD(),D=B.density[state.density];
   $("kw").value=D.kw;$("sqmRack").value=D.sqmRack;$("liquid").value=D.liquid;$("rackKg").value=D.rackKg;$("hrPerMW").value=D.hr;$("pue").value=B.pue[state.profile][state.density];
-  schedule(false);}
+  schedule(false);refreshResets();}
 function seg(id,key,cb){$(id).addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;state[key]=b.dataset.v;[...$(id).children].forEach(x=>x.setAttribute("aria-pressed",x===b));cb();});}
 seg("segProfile","profile",applyDefaults); seg("segElec","elec",()=>schedule(false));
 $("density").onchange=e=>{state.density=e.target.value;applyDensity();};
@@ -941,7 +993,7 @@ $("mixAdd").onclick=()=>{const B=activeBOD();
   state.mix.push({mw:state.mix.length?state.mix[state.mix.length-1].mw:Math.min(+$("targetMW").value||24,B.profile[state.profile].bldgMax),dens:state.density});
   drawMix();schedule(false);persist();};
 $("mixAuto").onclick=()=>{state.mix=[];drawMix();schedule(false);persist();};
-NUM.forEach(id=>$(id).addEventListener("input",()=>schedule(false)));
+NUM.forEach(id=>$(id).addEventListener("input",()=>{schedule(false);refreshResets();}));
 function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
@@ -1256,7 +1308,7 @@ function status(t){$("status").textContent=t;if(t)setTimeout(()=>{if($("status")
    waiting for the map's load event, which never fires while a tab is in the
    background (the browser freezes animation frames there). */
 function init(){
-  addTips();drawBOD();applyDefaults();drawMix();drawProjects();
+  addTips();drawBOD();applyDefaults();drawMix();drawProjects();refreshResets();
   const last=lsGet("dccg.lastSession",null);
   if(last&&last.ring&&last.ring.length>=3){restore(last);return;}
   const c=map.getCenter(),F=frame([[c.lng,c.lat]]);
