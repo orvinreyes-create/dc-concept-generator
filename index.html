@@ -388,7 +388,10 @@ map.on("load",()=>{
   map.addLayer({id:"layout-fill",type:"fill",source:"layout",paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":0.88}});
   map.addLayer({id:"layout-line",type:"line",source:"layout",paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
   map.addLayer({id:"site-line",type:"line",source:"site",paint:{"line-color":"#0F6E8C","line-width":2.5,"line-dasharray":[3,1.5]}});
-  init();
+  state.mapReady=true;
+  updateSiteSource();
+  if(state.pendingLayout&&state.result) renderLayout();
+  schedule(false);
 });
 
 /* local metric frame around the site */
@@ -513,8 +516,9 @@ function renderLayout(){
     part(0,s.Yd,s.La,s.Yd+s.D,"admin","");
     part(0,s.Yd+s.D,s.Lm,s.Yd+s.D+s.Ed,"ec","");
   }
-  map.getSource("layout").setData({type:"FeatureCollection",features:feats});
   state.layoutGeo=feats;
+  const src=map.getSource("layout"); if(!src){state.pendingLayout=true;return;} state.pendingLayout=false;
+  src.setData({type:"FeatureCollection",features:feats});
 }
 function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
   $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${o.targetMW}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${fmt(op.cov,0)}%</b><small>coverage</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
@@ -571,7 +575,10 @@ $("projFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{cons
 let persistT=null;function persist(){clearTimeout(persistT);persistT=setTimeout(()=>lsSet("dccg.lastSession",snapshot()),400);}
 function status(t){$("status").textContent=t;if(t)setTimeout(()=>{if($("status").textContent===t)$("status").textContent="";},8000);}
 
-/* ===== Init ===== */
+/* ===== Init =====
+   The form, profile banner and project list are set up immediately rather than
+   waiting for the map's load event, which never fires while a tab is in the
+   background (the browser freezes animation frames there). */
 function init(){
   drawBOD();applyDefaults();drawProjects();
   const last=lsGet("dccg.lastSession",null);
@@ -580,6 +587,7 @@ function init(){
   state.ring=[[-90,-100],[90,-100],[90,100],[-90,100]].map(F.toLL);
   buildHandles();schedule(false);
 }
+init();
 </script>
 </body>
 </html>
