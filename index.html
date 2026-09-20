@@ -347,14 +347,21 @@ function skeleton(type,P,o,pitch){
     const xs=inner.map(p=>p[0]),ys=inner.map(p=>p[1]);
     const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
     const horiz=(x1-x0)>=(y1-y0),cx=(x0+x1)/2,cy=(y0+y1)/2;
+    const span=horiz?x1-x0:y1-y0, base=horiz?x0:y0;
+    /* Bands are sized to hold a building, then the drives go between them.
+       Dividing the site into equal parts instead leaves bands too narrow to
+       build in, which is how a site ends up with roads and nothing else. */
+    const nb=Math.max(1,Math.floor((span+w)/(pitch+w)));
+    const total=nb*pitch+(nb-1)*w, start=base+(span-total)/2;
+    const between=[];
+    for(let i=1;i<nb;i++) between.push(start+i*pitch+(i-0.5)*w);
     if(type==="internal"){
       if(horiz) addLine([x0-10,cy],[x1+10,cy],"spine"); else addLine([cx,y0-10],[cx,y1+10],"spine");
-      const span=horiz?x1-x0:y1-y0,n=Math.max(1,Math.round(span/pitch));
-      for(let i=0;i<=n;i++){const t=(horiz?x0:y0)+span*i/n;
+      const ts=[start-w/2].concat(between,[start+total+w/2]);
+      for(const t of ts){
         if(horiz) addLine([t,y0-10],[t,y1+10],"branch"); else addLine([x0-10,t],[x1+10,t],"branch");}
     } else {
-      const span=horiz?x1-x0:y1-y0,n=Math.max(1,Math.floor(span/pitch));
-      for(let i=1;i<=n;i++){const t=(horiz?x0:y0)+span*i/(n+1);
+      for(const t of between){
         if(horiz) addLine([t,y0-10],[t,y1+10],"drive"); else addLine([x0-10,t],[x1+10,t],"drive");}}}
   return segs;}
 /* distance from an axis-aligned rect to a road centreline */
@@ -583,27 +590,46 @@ function solve(o,poly,B,coarse,hintDeg){
       for(const q of placed){const dx=Math.max(0,Math.max(q.r[0]-r[2],r[0]-q.r[2])),dy=Math.max(0,Math.max(q.r[1]-r[3],r[1]-q.r[3]));
         d=Math.min(d,Math.hypot(dx,dy));}
       return d===1e9?0:Math.min(d,pitch);};
-    const tryPlace=(w,h,kind,meta,swap,clear,spread)=>{
-      let best=null,bestScore=-1;
-      for(let y=bb[1];y<=bb[3];y+=step) for(let x=bb[0];x<=bb[2];x+=step){
+    /* support uses belong on remnant land at the boundary, not in the middle
+       of the site where they block a building */
+    const edgeScore=r=>{const c=[(r[0]+r[2])/2,(r[1]+r[3])/2];let d=1e9;
+      for(let i=0;i<P.length;i++) d=Math.min(d,segDist(c,P[i],P[(i+1)%P.length]));
+      return -d;};
+    const tryPlace=(w,h,kind,meta,swap,clear,mode)=>{
+      let best=null,bestScore=-Infinity;
+      const st=mode==="edge"?step*1.8:step;   /* support uses are small; a coarser search is plenty */
+      for(let y=bb[1];y<=bb[3];y+=st) for(let x=bb[0];x<=bb[2];x+=st){
         for(const [ww,hh,sw] of (swap?[[w,h,false],[h,w,true]]:[[w,h,false]])){
           const r=[x,y,x+ww,y+hh];
           if(r[2]>bb[2]||r[3]>bb[3]) continue;
           if(!free(r,clear)) continue;
-          if(!spread||!placed.length){placed.push({r,kind,meta:Object.assign({swap:sw},meta)});return true;}
-          const sc=spreadScore(r);
+          if(!mode||(mode==="spread"&&!placed.length)){placed.push({r,kind,meta:Object.assign({swap:sw},meta)});return true;}
+          const sc=mode==="edge"?edgeScore(r):spreadScore(r);
           if(sc>bestScore){bestScore=sc;best={r,kind,meta:Object.assign({swap:sw},meta)};}
-          if(bestScore>=pitch){placed.push(best);return true;}}}
+          if(mode==="spread"&&bestScore>=pitch){placed.push(best);return true;}}}
       if(best){placed.push(best);return true;}
       return false;};
     const subS=Math.sqrt(subArea);
-    const subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,!coarse);
-    let mw=0;const built=[];
-    for(let i=0;i<specs.length;i++){const s=specs[i];
-      const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
-      if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,o.road+4,!coarse)){mw+=s.m;built.push(s);} else break;}
-    const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,!coarse);
-    const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,!coarse);
+    const spreadMode=coarse?false:"spread", edgeMode=coarse?false:"edge";
+    const placeBuildings=()=>{let mw=0;const built=[],missed=[];
+      for(let i=0;i<specs.length;i++){const s=specs[i];
+        const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
+        if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,o.road+4,spreadMode)){mw+=s.m;built.push(s);}
+        else missed.push(s);}
+      return {mw,built,missed};};
+    /* Substation first is the safe order; if that leaves buildings out, try
+       the buildings first and fit the substation into what is left. */
+    let subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
+    let pb=placeBuildings();
+    if(!coarse&&pb.missed.length){
+      const keep=placed.splice(0);
+      const pb2=placeBuildings();
+      const sub2=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
+      if(pb2.mw>pb.mw&&sub2){pb=pb2;subOK=sub2;}
+      else {placed.splice(0);keep.forEach(q=>placed.push(q));}}
+    const mw=pb.mw,built=pb.built,missedSpecs=pb.missed;
+    const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,edgeMode);
+    const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,edgeMode);
     const cov=built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
     const ra=roadArea(roads),gate=gateFor(P,roads,o.frontPoint?rot(o.frontPoint,-a):null);
     /* GRD: the building entrance faces the main gate where feasible. The envelope
@@ -620,7 +646,7 @@ function solve(o,poly,B,coarse,hintDeg){
         const d=Math.hypot(c[0]-gate.node[0],c[1]-gate.node[1]);
         if(d<bd){bd=d;best=mu;}}
       pl.meta.mirror=best;}
-    res.push({deg,a,type,roads,placed,mw,built,subOK,pondOK,supOK,cov,specs,gate,roadArea:ra,targetMW,
+    res.push({deg,a,type,roads,placed,mw,built,missedSpecs,subOK,pondOK,supOK,cov,specs,gate,roadArea:ra,targetMW,
       score:mw*1e6+(subOK?4e5:0)+(pondOK?2e5:0)+(supOK?1e5:0)-ra*0.4});
   }
   /* a small parcel usually cannot take a campus module: offer the infill building */
@@ -665,9 +691,9 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   let limit;
   if(infill) limit="Target of "+r.targetMW+" MW IT fits as an infill building of "+L[0].storeys+" floors on "+fmt(L[0].foot,0)+" sqm.";
   else if(it>=r.targetMW) limit="Target of "+r.targetMW+" MW IT fits.";
-  else{const n=r.specs[L.length];
+  else{const n=(r.missedSpecs&&r.missedSpecs[0])||r.specs[L.length];
     limit=L.length===0?"No campus-style block fits. The smallest needs about "+Math.round(n.Lm+2*o.road)+" \u00D7 "+Math.round(n.H+(n.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)+" m including yard clearances."
-      :"Site caps this option at "+it+" MW of "+r.targetMW+" MW. Building "+(L.length+1)+" ("+n.m+" MW) does not fit.";
+      :"Site caps this option at "+it+" MW of "+r.targetMW+" MW. "+((r.missedSpecs&&r.missedSpecs.length>1)?r.missedSpecs.length+" buildings ("+fmt(r.missedSpecs.reduce((t,x)=>t+x.m,0),0)+" MW) do not fit.":"A "+n.m+" MW building does not fit.");
     if(L.some(s=>s.spill>0)) limit+=" Ground-level heat rejection is taking site area.";}
   const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
