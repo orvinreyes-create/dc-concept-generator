@@ -640,15 +640,35 @@ function showResults(items,q){
     if(it.box) map.fitBounds(it.box,{padding:60,maxZoom:18,duration:600});
     else map.flyTo({center:[it.lon,it.lat],zoom:17,duration:600});
     $("searchQ").value=it.short;closeResults();});}
+function placeLabel(name,parts){const rest=parts.filter(Boolean).filter((v,k,a)=>a.indexOf(v)===k&&v!==name);
+  return rest.length?name+" \u2014 "+rest.slice(0,2).join(", "):name;}
+async function searchNominatim(q){
+  const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&countrycodes=ph&addressdetails=1&q="+encodeURIComponent(q));
+  if(!r.ok) throw new Error("status "+r.status);
+  return (await r.json()).map(x=>{const a=x.address||{};
+    return {lon:+x.lon,lat:+x.lat,short:x.name||String(x.display_name).split(",")[0],
+      label:placeLabel(x.name||String(x.display_name).split(",")[0],[a.city||a.town||a.municipality||a.village,a.state||a.province]),
+      box:(x.boundingbox&&Math.abs(+x.boundingbox[1]-+x.boundingbox[0])>0.002)?[[+x.boundingbox[2],+x.boundingbox[0]],[+x.boundingbox[3],+x.boundingbox[1]]]:null};});}
+async function searchPhoton(q){
+  const c=map.getCenter();
+  const r=await fetch("https://photon.komoot.io/api/?limit=8&lang=en&lat="+c.lat.toFixed(3)+"&lon="+c.lng.toFixed(3)+"&q="+encodeURIComponent(q));
+  if(!r.ok) throw new Error("status "+r.status);
+  return (await r.json()).features.filter(f=>f.properties.countrycode==="PH").map(f=>{const p=f.properties,e=p.extent;
+    return {lon:f.geometry.coordinates[0],lat:f.geometry.coordinates[1],short:p.name,
+      label:placeLabel(p.name,[p.city||p.district||p.county,p.state]),
+      box:(e&&Math.abs(e[2]-e[0])>0.002)?[[e[0],e[3]],[e[2],e[1]]]:null};});}
+async function runSearch(q){
+  const res=await Promise.allSettled([searchPhoton(q),searchNominatim(q)]);
+  if(res.every(r=>r.status==="rejected")) throw res[0].reason;
+  const seen=new Set(),out=[];
+  for(const r of res){ if(r.status!=="fulfilled") continue;
+    for(const it of r.value){ if(!it.short) continue;
+      const k=it.short.toLowerCase()+"@"+it.lat.toFixed(3)+","+it.lon.toFixed(3);
+      if(seen.has(k))continue; seen.add(k); out.push(it); }}
+  return out.slice(0,8);}
 $("searchForm").onsubmit=async e=>{e.preventDefault();const q=$("searchQ").value.trim();if(!q)return;
   const l=$("searchResults");l.hidden=false;l.innerHTML='<li class="none">Searching\u2026</li>';
-  try{
-    const r=await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&countrycodes=ph&addressdetails=1&q="+encodeURIComponent(q));
-    if(!r.ok) throw new Error("status "+r.status);
-    const j=await r.json();
-    const items=j.map(x=>({lon:+x.lon,lat:+x.lat,label:x.display_name,short:x.name||String(x.display_name).split(",")[0],
-      box:(x.boundingbox&&Math.abs(+x.boundingbox[1]-+x.boundingbox[0])>0.002)?[[+x.boundingbox[2],+x.boundingbox[0]],[+x.boundingbox[3],+x.boundingbox[1]]]:null}));
-    showResults(items,q);}
+  try{ showResults(await runSearch(q),q); }
   catch(err){l.innerHTML='<li class="none">Search is unavailable right now. You can still pan the map by hand.</li>';}};
 $("searchQ").addEventListener("keydown",e=>{if(e.key==="Escape")closeResults();});
 document.addEventListener("click",e=>{if(!e.target.closest(".search"))closeResults();});
