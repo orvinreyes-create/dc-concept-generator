@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DC Concept Generator</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#EEF1F0;--panel:#FFFFFF;--ink:#1D2B36;--muted:#5E6B75;--line:#D3D9DC;--accent:#0F6E8C;--warn:#B7791F;--warnbg:#FFF4DE;--bad:#B03A2E;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--paper:#161C21;--panel:#1F272E;--ink:#E6ECEF;--muted:#9AA7B0;--line:#34404A;--accent:#5BB6D3;--warnbg:#3A2F17}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 Barlow,"Segoe UI",Arial,sans-serif}
+.app{display:grid;grid-template-columns:320px minmax(0,1fr) 330px;height:100vh}
+aside,.results{background:var(--panel);overflow:auto;padding:12px 14px}
+aside{border-right:1px solid var(--line)}.results{border-left:1px solid var(--line)}
+h1{font:600 22px/1.1 "Barlow Condensed","Arial Narrow",sans-serif;margin:0 0 2px}
+h2{font:600 17px/1.2 "Barlow Condensed",sans-serif;margin:16px 0 6px}
+label{display:block;font-size:13px;color:var(--muted);margin:7px 0 3px}
+input,select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:6px 8px}
+textarea{min-height:80px;font-size:13px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg button{flex:1;border:0;background:transparent;color:var(--ink);padding:7px 4px;font:inherit;font-size:14px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.btn{font:600 14px Barlow,sans-serif;border-radius:4px;padding:8px 10px;cursor:pointer;background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+details{border-top:1px solid var(--line);margin-top:12px;padding-top:4px}
+summary{cursor:pointer;font:600 16px "Barlow Condensed",sans-serif;padding:4px 0}
+.hint{font-size:12px;color:var(--muted);margin:4px 0 0}
+.pill{display:block;font-size:13px;padding:6px 8px;border-radius:4px;margin:6px 0 2px;border:1px solid var(--line)}
+.pill.placeholder{background:var(--warnbg);border-color:var(--warn);color:var(--ink)}
+.mapwrap{position:relative;min-width:0}
+#map{position:absolute;inset:0}
+.toolbar{position:absolute;top:10px;left:10px;right:10px;display:flex;gap:6px;flex-wrap:wrap;z-index:2;pointer-events:none}
+.toolbar>*{pointer-events:auto}
+.toolbar .btn{background:var(--panel)}
+.toolbar .btn[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 -3px 0 var(--accent)}
+.search{display:flex;gap:4px;flex:1;min-width:180px;max-width:340px}
+.search input{background:var(--panel)}
+.live{position:absolute;left:10px;bottom:28px;z-index:2;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:8px 12px;max-width:min(520px,calc(100% - 20px))}
+.live .nums{display:flex;gap:18px;flex-wrap:wrap}
+.live b{font:600 26px/1 "Barlow Condensed",sans-serif;display:block}
+.live small{color:var(--muted);font-size:12px}
+.live .lim{font-size:13px;margin-top:6px}
+.drawhint{position:absolute;top:56px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:6px 10px;border-radius:4px;font-size:13px;z-index:2}
+.vtx{width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #0F6E8C;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.vtx.sel{background:#B03A2E;border-color:#fff}
+.mid{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.85);border:2px dashed #0F6E8C;cursor:copy}
+.move{width:26px;height:26px;border-radius:50%;background:#0F6E8C;color:#fff;display:grid;place-items:center;font-size:15px;cursor:move;box-shadow:0 0 0 2px #fff}
+.lbl{font:600 12px "Barlow Condensed",sans-serif;color:#1D2B36;background:rgba(255,255,255,.8);padding:1px 4px;border-radius:3px;pointer-events:none;white-space:nowrap}
+.big{font:600 32px/1 "Barlow Condensed",sans-serif}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+td{padding:4px 0;border-bottom:1px solid var(--line);vertical-align:top}
+td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8px}
+.limit{background:var(--warnbg);border-left:3px solid var(--warn);padding:8px 10px;margin:8px 0;font-size:14px}
+.flag{color:var(--bad);font-size:13.5px;margin:4px 0}
+.banner{font-size:12.5px;color:var(--warn);border:1px dashed var(--warn);padding:6px 8px;border-radius:4px;margin:8px 0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12.5px;color:var(--muted);margin-top:10px}
+.legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px;background:var(--c)}
+.projects{list-style:none;padding:0;margin:8px 0 0;font-size:14px}
+.projects li{display:flex;justify-content:space-between;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)}
+.projects button{font:inherit;font-size:13px;background:none;border:0;color:var(--accent);cursor:pointer;padding:0 3px}
+.status{font-size:13px;color:var(--muted);min-height:18px;margin-top:6px}
+@media (max-width:1100px){
+  .app{grid-template-columns:1fr;height:auto}
+  .mapwrap{height:68vh;order:-1}
+  aside,.results{border:0;border-top:1px solid var(--line)}
+}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <h1>Data center concept generator</h1>
+  <p class="hint">Draw or import a site, then drag corners. The layout re-solves as you edit. Concept test-fit only.</p>
+
+  <h2>Basis of design</h2>
+  <select id="bodSelect" aria-label="Active basis of design profile"></select>
+  <span class="pill" id="bodPill"></span>
+  <div class="btns">
+    <button class="btn" id="bodImport" type="button">Import profile</button>
+    <button class="btn" id="bodExport" type="button">Export profile</button>
+  </div>
+  <input type="file" id="bodFile" accept=".json,application/json" hidden>
+
+  <h2>Profile</h2>
+  <div class="seg" id="segProfile"><button data-v="metro" aria-pressed="true">Metro</button><button data-v="campus" aria-pressed="false">Campus</button></div>
+  <label for="density">Rack density</label>
+  <select id="density">
+    <option value="ent">Enterprise (8–20 kW/rack)</option>
+    <option value="ai60">AI-ready 60 kW/rack</option>
+    <option value="ai130">AI-ready 130 kW/rack</option>
+    <option value="ai200">AI-ready 200+ kW/rack</option>
+  </select>
+  <div class="row">
+    <div><label for="targetMW">Target IT (MW)</label><input id="targetMW" type="number" min="1" step="1"></div>
+    <div><label for="kw">kW per rack</label><input id="kw" type="number" min="1"></div>
+  </div>
+  <label>Electrical plant</label>
+  <div class="seg" id="segElec"><button data-v="EROOM" aria-pressed="true">EROOM</button><button data-v="EMOD" aria-pressed="false">EMOD</button></div>
+
+  <h2>Site rules</h2>
+  <div class="row">
+    <div><label for="setback">Setback (m)</label><input id="setback" type="number" min="0" step="0.5"></div>
+    <div><label for="maxH">Height limit (m)</label><input id="maxH" type="number" min="5"></div>
+  </div>
+  <div class="row">
+    <div><label for="maxCov">Max coverage (%)</label><input id="maxCov" type="number" min="5" max="100"></div>
+    <div><label for="storeys">Storeys</label><input id="storeys" type="number" min="1" max="8"></div>
+  </div>
+  <p class="hint">Take setbacks, height and coverage from the city zoning ordinance and the National Building Code.</p>
+
+  <details>
+    <summary>Import a boundary</summary>
+    <label for="bearings">Title technical description, one course per line</label>
+    <textarea id="bearings" placeholder="N 12 15 E 180.00&#10;S 78 40 E 210.50&#10;S 12 15 W 180.00&#10;N 78 40 W 210.50"></textarea>
+    <button class="btn" id="useBearings" type="button" style="width:100%;margin-top:6px">Place courses at map centre</button>
+    <p class="hint">Then drag the centre handle onto the tie point.</p>
+    <label for="geojson">GeoJSON polygon, or lon,lat pairs</label>
+    <textarea id="geojson"></textarea>
+    <button class="btn" id="useGeo" type="button" style="width:100%;margin-top:6px">Use these coordinates</button>
+  </details>
+
+  <details>
+    <summary>Adjust design values</summary>
+    <div class="row">
+      <div><label for="sqmRack">Hall sqm per rack</label><input id="sqmRack" type="number" step="0.1"></div>
+      <div><label for="pue">Design PUE</label><input id="pue" type="number" step="0.01"></div>
+    </div>
+    <div class="row">
+      <div><label for="liquid">Heat to liquid (%)</label><input id="liquid" type="number" min="0" max="100"></div>
+      <div><label for="rackKg">Rack weight (kg)</label><input id="rackKg" type="number"></div>
+    </div>
+    <div class="row">
+      <div><label for="hrPerMW">Heat rejection sqm/MW</label><input id="hrPerMW" type="number"></div>
+      <div><label for="bldgMax">Max MW per building</label><input id="bldgMax" type="number"></div>
+    </div>
+    <div class="row">
+      <div><label for="pondPct">Retention (% site)</label><input id="pondPct" type="number" step="0.5"></div>
+      <div><label for="roadW">Internal road (m)</label><input id="roadW" type="number"></div>
+    </div>
+    <p class="hint">These override the profile for this site only. Use Export profile to keep them.</p>
+  </details>
+
+  <details open>
+    <summary>Projects</summary>
+    <label for="projName">Project name</label>
+    <input id="projName" placeholder="e.g. Pasig lot A">
+    <div class="btns">
+      <button class="btn" id="saveLocal" type="button">Save on this device</button>
+      <button class="btn" id="exportProj" type="button">Export project file</button>
+    </div>
+    <button class="btn" id="importProj" type="button" style="width:100%;margin-top:6px">Open project file</button>
+    <input type="file" id="projFile" accept=".json,application/json" hidden>
+    <ul class="projects" id="projList"></ul>
+    <div class="status" id="status" role="status"></div>
+  </details>
+</aside>
+
+<div class="mapwrap">
+  <div id="map"></div>
+  <div class="toolbar">
+    <form class="search" id="searchForm"><input id="searchQ" placeholder="Search a place in the Philippines" aria-label="Search place"><button class="btn" type="submit">Go</button></form>
+    <button class="btn" id="btnDraw" type="button" aria-pressed="false">Draw site</button>
+    <button class="btn" id="btnFinish" type="button" hidden>Finish</button>
+    <button class="btn" id="btnRemove" type="button" disabled>Remove corner</button>
+    <button class="btn" id="btnBase" type="button">Satellite</button>
+    <button class="btn" id="btnNext" type="button">Next orientation</button>
+    <button class="btn" id="btnPNG" type="button">PNG</button>
+    <button class="btn" id="btnCSV" type="button">CSV</button>
+    <button class="btn" id="btnGeo" type="button">GeoJSON</button>
+  </div>
+  <div class="drawhint" id="drawHint" hidden>Click the map to place corners. Press Finish when done.</div>
+  <div class="live" id="live"></div>
+</div>
+
+<section class="results" id="results"><h2>Spec sheet</h2><p class="hint">Draw a site to see results.</p></section>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+/* ===== Placeholder basis of design (generic, not from any company document) ===== */
+const PLACEHOLDER = {
+  name:"Placeholder values", placeholder:true, version:1,
+  moduleMW:8, circFactor:1.3, floorM:6.0, roofPlantM:6, rackKgLimit:2000,
+  gensPerModule:5, genKVA:3000, fuelHours:24, fuelLPerGen:15000,
+  elec:{ EROOM:{crit:150, ecPerMW:200, admin:3000}, EMOD:{crit:70, ecPerMW:400, admin:3000} },
+  density:{
+    ent:  {kw:10, sqmRack:2.6, liquid:0,  rackKg:1000, hr:120},
+    ai60: {kw:60, sqmRack:4.0, liquid:70, rackKg:1200, hr:200},
+    ai130:{kw:130,sqmRack:4.5, liquid:85, rackKg:1600, hr:200},
+    ai200:{kw:200,sqmRack:5.0, liquid:90, rackKg:2500, hr:200}
+  },
+  pue:{ metro:{ent:1.45,ai60:1.35,ai130:1.30,ai200:1.28}, campus:{ent:1.40,ai60:1.33,ai130:1.28,ai200:1.26} },
+  profile:{
+    metro: {targetMW:20, setback:5,  maxH:50, maxCov:70, storeys:4, bldgMax:24, pond:2, road:8, supportSqm:1500},
+    campus:{targetMW:96, setback:10, maxH:40, maxCov:60, storeys:3, bldgMax:48, pond:5, road:8, supportSqm:2500}
+  }
+};
+const DLABEL={ent:"Enterprise",ai60:"AI-ready 60 kW",ai130:"AI-ready 130 kW",ai200:"AI-ready 200+ kW"};
+
+/* ===== Engine ===== */
+function polyArea(p){let a=0;for(let i=0;i<p.length;i++){const q=p[(i+1)%p.length];a+=p[i][0]*q[1]-q[0]*p[i][1];}return a/2;}
+function rot(pt,a){const c=Math.cos(a),s=Math.sin(a);return [pt[0]*c-pt[1]*s,pt[0]*s+pt[1]*c];}
+function pip(x,y,p){let ins=false;for(let i=0,j=p.length-1;i<p.length;j=i++){const xi=p[i][0],yi=p[i][1],xj=p[j][0],yj=p[j][1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))ins=!ins;}return ins;}
+function segDist(p,a,b){const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l:0;t=Math.max(0,Math.min(1,t));return Math.hypot(a[0]+t*dx-p[0],a[1]+t*dy-p[1]);}
+function segInter(a,b,c,d){const o=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);return ((o(c,d,a)>0)!==(o(c,d,b)>0))&&((o(a,b,c)>0)!==(o(a,b,d)>0));}
+function segSeg(a,b,c,d){if(segInter(a,b,c,d))return 0;return Math.min(segDist(a,c,d),segDist(b,c,d),segDist(c,a,b),segDist(d,a,b));}
+function rectFits(r,P,s){const C=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]];
+  for(const c of C) if(!pip(c[0],c[1],P)) return false;
+  for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];for(let k=0;k<4;k++) if(segSeg(C[k],C[(k+1)%4],a,b)<s) return false;}
+  return true;}
+function overlaps(r,list){for(const q of list){if(r[0]<q[0][2]&&r[2]>q[0][0]&&r[1]<q[0][3]&&r[3]>q[0][1])return true;}return false;}
+
+function buildingSpec(m,o,B){
+  const E=B.elec[o.elec], racks=Math.round(m*1000/o.kw), hall=racks*o.sqmRack;
+  const gross=hall*B.circFactor+E.crit*m, foot=gross/o.storeys;
+  const D=Math.max(30,Math.min(75,Math.sqrt(foot/2))), L=foot/D;
+  const adminFoot=E.admin/3, La=adminFoot/D, ecFoot=E.ecPerMW*m/o.storeys;
+  const hrNeed=o.hrPerMW*m, roofCap=foot*0.9, spill=Math.max(0,hrNeed-roofCap);
+  const Lm=Math.max(La+L,Math.sqrt((foot+adminFoot+ecFoot+spill)*1.2));
+  const Ed=Math.max(12,ecFoot/Lm), Yd=spill>0?Math.max(10,spill/Lm):0;
+  return {m,racks,hall,gross,foot,D,L,Lm,adminFoot,La,ecFoot,Ed,hrNeed,roofHR:Math.min(hrNeed,roofCap),spill,Yd,
+    height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM:0)+1.5};
+}
+function solve(o,poly,B,coarse,hintDeg){
+  if(polyArea(poly)<0) poly=poly.slice().reverse();
+  const siteArea=Math.abs(polyArea(poly));
+  const nB=Math.ceil(o.targetMW/o.bldgMax), specs=[]; let rem=o.targetMW;
+  for(let i=0;i<nB;i++){const m=Math.min(o.bldgMax,rem);specs.push(buildingSpec(m,o,B));rem-=m;}
+  const facT=o.targetMW*o.pue, subArea=facT<=30?1500:facT<=100?3500:8000+Math.max(0,facT-300)*20;
+  const pondArea=siteArea*o.pond/100, supportArea=o.supportSqm, r2=o.road/2;
+  const angs=new Set();
+  for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];let t=Math.atan2(b[1]-a[1],b[0]-a[0]);t=((t%(Math.PI/2))+Math.PI/2)%(Math.PI/2);angs.add(Math.round(t*180/Math.PI)%90);}
+  if(coarse){ if(hintDeg!=null) angs.add(hintDeg); } else for(let d=0;d<90;d+=15) angs.add(d);
+  const res=[];
+  for(const deg of angs){
+    const a=deg*Math.PI/180, P=poly.map(p=>rot(p,-a));
+    const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
+    const bx0=Math.min(...xs),bx1=Math.max(...xs),by0=Math.min(...ys),by1=Math.max(...ys);
+    const step=Math.max(3,Math.sqrt(siteArea)/110)*(coarse?2.5:1);
+    const placed=[];
+    const tryPlace=(w,h,type,meta,swap)=>{
+      const maxDim=Math.max(w,h);
+      for(let y=by0;y<=by1-Math.min(w,h);y+=step) for(let x=bx0;x<=bx1-Math.min(w,h);x+=step){
+        const opts=swap?[[w,h,false],[h,w,true]]:[[w,h,false]];
+        for(const [ww,hh,sw] of opts){const r=[x,y,x+ww,y+hh];
+          if(r[2]>bx1||r[3]>by1||overlaps(r,placed)||!rectFits(r,P,o.setback)) continue;
+          placed.push([r,type,Object.assign({swap:sw},meta)]);return true;}
+      }
+      return false;
+    };
+    const subS=Math.sqrt(subArea), subOK=tryPlace(subS,subS,"sub",{},false);
+    let mw=0; const built=[];
+    for(let i=0;i<specs.length;i++){const s=specs[i];if(tryPlace(s.Lm+2*r2,s.Yd+s.D+s.Ed+2*r2,"bldg",{i,s},true)){mw+=s.m;built.push(s);}else break;}
+    const pw=Math.sqrt(pondArea*1.6), pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{},true);
+    const sw=Math.sqrt(supportArea*2), supOK=tryPlace(sw,supportArea/sw,"support",{},true);
+    const cov=built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
+    const env=placed.reduce((t,q)=>t+(q[0][2]-q[0][0])*(q[0][3]-q[0][1]),0);
+    res.push({deg,a,placed,mw,built,subOK,pondOK,supOK,cov,specs,score:mw*1e6+(subOK?5e5:0)+(pondOK?2e5:0)+(supOK?1e5:0)-env});
+  }
+  res.sort((p,q)=>q.score-p.score);
+  const top=[],seen=new Set();
+  for(const r of res){if(top.length&&r.mw<top[0].mw*0.5)continue;const k=r.mw+"|"+r.subOK+r.pondOK+r.supOK+"|"+Math.round(r.deg/10);if(seen.has(k))continue;seen.add(k);top.push(r);if(top.length===3)break;}
+  return {options:top.map(r=>summarise(r,o,B,siteArea,subArea,pondArea,supportArea)),siteArea};
+}
+function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
+  const L=r.built,sum=f=>L.reduce((t,s)=>t+f(s),0),it=r.mw,fac=it*o.pue;
+  const streams=sum(s=>Math.ceil(s.m/B.moduleMW)*B.gensPerModule), gens=streams+L.length;
+  const liquidMW=it*o.liquid/100, cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
+  const maxHt=L.length?Math.max(...L.map(s=>s.height)):0, flags=[];
+  if(!r.subOK) flags.push("Substation does not fit on the site.");
+  if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
+  if(!r.supOK) flags.push("Parking and support yards do not fit.");
+  if(maxHt>o.maxH) flags.push(`Height about ${maxHt.toFixed(0)} m exceeds the ${o.maxH} m limit. Reduce storeys.`);
+  if(r.cov>o.maxCov) flags.push(`Coverage ${r.cov.toFixed(0)}% exceeds the ${o.maxCov}% limit.`);
+  if(o.rackKg>B.rackKgLimit) flags.push(`Rack weight ${o.rackKg} kg exceeds the profile's ${B.rackKgLimit} kg floor-loading basis. Upper floors need structural review.`);
+  if(o.profile==="metro"&&siteArea>=50000) flags.push("Site is 5 ha or more, which fits the campus profile.");
+  if(o.profile==="campus"&&siteArea<50000) flags.push("Site is under 5 ha, which fits the metro profile.");
+  let limit;
+  if(it>=o.targetMW) limit=`Target of ${o.targetMW} MW IT fits.`;
+  else{const n=r.specs[L.length];
+    limit=L.length===0?`No data building fits. The smallest block needs about ${Math.round(n.Lm+o.road)} × ${Math.round(n.Yd+n.D+n.Ed+o.road)} m inside the setbacks.`
+      :`Site area caps this option at ${it} MW of ${o.targetMW} MW. Building ${L.length+1} (${n.m} MW) does not fit.`;
+    if(L.some(s=>s.spill>0)) limit+=" Heat rejection in ground yards is taking site area.";}
+  return {deg:r.deg,a:r.a,placed:r.placed,it,fac,cov:r.cov,limit,flags,
+    grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
+    rows:[["Site area",fmt(siteArea/1e4,2)+" ha"],["Block rotation",r.deg+"°"],["Data buildings",L.length+" of "+r.specs.length],
+      ["IT load",fmt(it,0)+" MW"],["Facility load at PUE "+o.pue,fmt(fac,1)+" MW"],["Racks",fmt(sum(s=>s.racks),0)],["Density",o.kw+" kW/rack"],
+      ["Data hall area",fmt(sum(s=>s.hall),0)+" sqm"],["Gross floor area, data buildings",fmt(sum(s=>s.gross),0)+" sqm"],
+      ["Admin gross floor area",fmt(L.length*B.elec[o.elec].admin,0)+" sqm"],["Building footprint",fmt(sum(s=>s.foot+s.adminFoot),0)+" sqm"],
+      ["Building coverage",fmt(r.cov,1)+"%"],["Storeys / height",o.storeys+" / "+fmt(maxHt,1)+" m"],
+      ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm"],["Heat rejection on roof",fmt(sum(s=>s.roofHR),0)+" sqm"],
+      ["Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm"],["Heat to liquid",fmt(liquidMW,1)+" MW ("+o.liquid+"%)"],
+      ["CDUs (2 MW, N+1 per building)",fmt(cdus,0)],["ITE power streams",fmt(streams,0)],
+      ["Generators ("+fmt(B.genKVA,0)+" kVA, incl. house)",fmt(gens,0)],["Fuel stored at "+B.fuelHours+" h",fmt(gens*B.fuelLPerGen/1000,0)+" m³"],
+      ["Substation area",fmt(subArea,0)+" sqm"],["Stormwater retention",fmt(pondArea,0)+" sqm"],["Parking and support yards",fmt(supportArea,0)+" sqm"]]};
+}
+function fmt(n,d){return Number(n).toLocaleString("en-PH",{minimumFractionDigits:d,maximumFractionDigits:d});}
+function parseBearings(txt){const pts=[[0,0]];let x=0,y=0;const lines=txt.split(/\n/).map(l=>l.trim()).filter(Boolean);
+  for(const ln of lines){const m=ln.toUpperCase().replace(/[°'’"]/g," ").match(/([NS])\s*(\d+(?:\.\d+)?)\s*(\d+(?:\.\d+)?)?\s*([EW])\s*[,;]?\s*(\d+(?:\.\d+)?)/);
+    if(!m) throw new Error("Could not read course: "+ln);
+    const th=(+m[2])+((+m[3]||0)/60),d=+m[5];let az=m[1]==="N"?(m[4]==="E"?th:360-th):(m[4]==="E"?180-th:180+th);az*=Math.PI/180;
+    x+=d*Math.sin(az);y+=d*Math.cos(az);pts.push([x,y]);}
+  if(lines.length<3) throw new Error("Enter at least three courses.");
+  const gap=Math.hypot(x,y);pts.pop();return {poly:pts,closure:gap};}
+function parseCoords(txt){let ring;
+  try{const g=JSON.parse(txt);const geom=g.type==="FeatureCollection"?g.features[0].geometry:(g.type==="Feature"?g.geometry:g);ring=geom.type==="MultiPolygon"?geom.coordinates[0][0]:geom.coordinates[0];}
+  catch(e){ring=txt.split(/\n/).map(l=>l.trim()).filter(Boolean).map(l=>l.split(/[,\s]+/).map(Number));}
+  if(!ring||ring.length<3||ring.some(p=>p.length<2||p.some(isNaN))) throw new Error("Could not read coordinates. Use lon,lat pairs.");
+  const f=ring[0],l=ring[ring.length-1]; if(f[0]===l[0]&&f[1]===l[1]) ring=ring.slice(0,-1);
+  return ring.map(p=>[p[0],p[1]]);}
+
+/* ===== BOD profiles ===== */
+const $=id=>document.getElementById(id);
+const LS_BOD="dccg.bod.v1", LS_PROJ="dccg.projects.v1", LS_ACTIVE="dccg.bod.active";
+function lsGet(k,d){try{return JSON.parse(localStorage.getItem(k))??d;}catch(e){return d;}}
+function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
+function profiles(){return lsGet(LS_BOD,[]);}
+function activeBOD(){const id=localStorage.getItem(LS_ACTIVE);return profiles().find(p=>p.id===id)||PLACEHOLDER;}
+function validateBOD(p){
+  const need=["moduleMW","circFactor","floorM","elec","density","pue","profile"];
+  for(const k of need) if(p[k]==null) throw new Error("Profile is missing “"+k+"”.");
+  for(const e of ["EROOM","EMOD"]) if(!p.elec[e]) throw new Error("Profile is missing elec."+e+".");
+  for(const d of ["ent","ai60","ai130","ai200"]) if(!p.density[d]) throw new Error("Profile is missing density."+d+".");
+  return Object.assign({},PLACEHOLDER,p,{placeholder:false});
+}
+function drawBOD(){
+  const list=profiles(), act=activeBOD();
+  $("bodSelect").innerHTML=`<option value="">Placeholder values</option>`+list.map(p=>`<option value="${p.id}" ${p.id===act.id?"selected":""}>${esc(p.name)}</option>`).join("");
+  const pill=$("bodPill");
+  if(act.placeholder){pill.className="pill placeholder";pill.textContent="Using placeholder values. Import your profile before screening real sites.";}
+  else{pill.className="pill";pill.textContent=`Profile: ${act.name} (imported ${new Date(act.importedAt).toLocaleDateString("en-PH",{day:"numeric",month:"short",year:"numeric"})})`;}
+}
+$("bodSelect").onchange=e=>{localStorage.setItem(LS_ACTIVE,e.target.value);drawBOD();applyDefaults();};
+$("bodImport").onclick=()=>$("bodFile").click();
+$("bodFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  try{const p=validateBOD(JSON.parse(await f.text()));p.id=p.id||("p"+Date.now());p.importedAt=new Date().toISOString();
+    const list=profiles().filter(x=>x.name!==p.name);list.push(p);
+    if(!lsSet(LS_BOD,list)) throw new Error("This browser blocked storage. Private browsing may be on.");
+    localStorage.setItem(LS_ACTIVE,p.id);drawBOD();applyDefaults();status("Imported profile "+p.name+".");}
+  catch(err){status("Import failed: "+err.message);} e.target.value="";};
+$("bodExport").onclick=()=>{const B=activeBOD(),o=readOpts(),copy=JSON.parse(JSON.stringify(B));
+  delete copy.placeholder;copy.name=B.placeholder?"My profile":B.name;
+  Object.assign(copy.density[state.density],{kw:o.kw,sqmRack:o.sqmRack,liquid:o.liquid,rackKg:o.rackKg,hr:o.hrPerMW});
+  copy.pue[state.profile][state.density]=o.pue;
+  Object.assign(copy.profile[state.profile],{setback:o.setback,maxH:o.maxH,maxCov:o.maxCov,storeys:o.storeys,bldgMax:o.bldgMax,pond:o.pond,road:o.road,targetMW:o.targetMW});
+  download((copy.name||"profile").replace(/[^\w\-]+/g,"-")+".json",JSON.stringify(copy,null,2),"application/json");};
+
+/* ===== State and form ===== */
+const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm"};
+const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW"];
+function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
+  const s=(id,v)=>$(id).value=v;
+  s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
+  applyDensity();}
+function applyDensity(){const B=activeBOD(),D=B.density[state.density];
+  $("kw").value=D.kw;$("sqmRack").value=D.sqmRack;$("liquid").value=D.liquid;$("rackKg").value=D.rackKg;$("hrPerMW").value=D.hr;$("pue").value=B.pue[state.profile][state.density];
+  schedule(false);}
+function seg(id,key,cb){$(id).addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;state[key]=b.dataset.v;[...$(id).children].forEach(x=>x.setAttribute("aria-pressed",x===b));cb();});}
+seg("segProfile","profile",applyDefaults); seg("segElec","elec",()=>schedule(false));
+$("density").onchange=e=>{state.density=e.target.value;applyDensity();};
+NUM.forEach(id=>$(id).addEventListener("input",()=>schedule(false)));
+function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
+  return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
+    storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
+    pond:g("pondPct"),road:g("roadW"),supportSqm:B.profile[state.profile].supportSqm||2000};}
+
+/* ===== Map ===== */
+const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,preserveDrawingBuffer:true,attributionControl:{compact:true},
+  style:{version:8,sources:{
+    osm:{type:"raster",tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],tileSize:256,maxzoom:19,attribution:"© OpenStreetMap contributors"},
+    sat:{type:"raster",tiles:["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],tileSize:256,maxzoom:19,attribution:"Imagery © Esri, Maxar, Earthstar Geographics"}},
+    layers:[{id:"osm",type:"raster",source:"osm"},{id:"sat",type:"raster",source:"sat",layout:{visibility:"none"}}]}});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"top-right");
+map.addControl(new maplibregl.ScaleControl({unit:"metric"}),"bottom-right");
+const COLORS={hall:"#9CC3E6",admin:"#E9B7D3",ec:"#9ED6A6",yard:"#C3C8CC",sub:"#B8A9D9",pond:"#8FD0E6",support:"#E4DDB5",road:"#8A9197",spare:"#F2F2EC"};
+const EMPTY={type:"FeatureCollection",features:[]};
+map.on("load",()=>{
+  map.addSource("layout",{type:"geojson",data:EMPTY});
+  map.addSource("site",{type:"geojson",data:EMPTY});
+  map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":"#FFFFFF","fill-opacity":0.25}});
+  map.addLayer({id:"layout-fill",type:"fill",source:"layout",paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":0.88}});
+  map.addLayer({id:"layout-line",type:"line",source:"layout",paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
+  map.addLayer({id:"site-line",type:"line",source:"site",paint:{"line-color":"#0F6E8C","line-width":2.5,"line-dasharray":[3,1.5]}});
+  init();
+});
+
+/* local metric frame around the site */
+function frame(ring){const lon0=ring.reduce((a,p)=>a+p[0],0)/ring.length,lat0=ring.reduce((a,p)=>a+p[1],0)/ring.length;
+  const kx=111320*Math.cos(lat0*Math.PI/180),ky=110574;
+  return {toM:p=>[(p[0]-lon0)*kx,(p[1]-lat0)*ky],toLL:p=>[lon0+p[0]/kx,lat0+p[1]/ky]};}
+
+/* vertex, midpoint and move handles */
+let vMarkers=[],mMarkers=[],moveMarker=null;
+function clearHandles(){[...vMarkers,...mMarkers].forEach(m=>m.remove());vMarkers=[];mMarkers=[];if(moveMarker){moveMarker.remove();moveMarker=null;}}
+function centroid(r){return [r.reduce((a,p)=>a+p[0],0)/r.length,r.reduce((a,p)=>a+p[1],0)/r.length];}
+function buildHandles(){
+  clearHandles(); const R=state.ring; if(R.length<3) return;
+  R.forEach((p,i)=>{const el=document.createElement("div");el.className="vtx"+(i===state.sel?" sel":"");el.title="Drag to move. Click to select.";
+    const mk=new maplibregl.Marker({element:el,draggable:true}).setLngLat(p).addTo(map);
+    let moved=false;
+    mk.on("dragstart",()=>{moved=true;});
+    mk.on("drag",()=>{const ll=mk.getLngLat();R[i]=[ll.lng,ll.lat];updateGeometryHandles();schedule(true);});
+    mk.on("dragend",()=>{schedule(false);persist();setTimeout(()=>moved=false,0);});
+    el.addEventListener("click",ev=>{ev.stopPropagation();if(moved)return;state.sel=(state.sel===i?-1:i);buildHandles();$("btnRemove").disabled=state.sel<0||R.length<=3;});
+    vMarkers.push(mk);});
+  R.forEach((p,i)=>{const q=R[(i+1)%R.length],el=document.createElement("div");el.className="mid";el.title="Click to add a corner";
+    const mk=new maplibregl.Marker({element:el}).setLngLat([(p[0]+q[0])/2,(p[1]+q[1])/2]).addTo(map);
+    el.addEventListener("click",ev=>{ev.stopPropagation();R.splice(i+1,0,[(p[0]+q[0])/2,(p[1]+q[1])/2]);state.sel=i+1;buildHandles();schedule(false);persist();});
+    mMarkers.push(mk);});
+  const el=document.createElement("div");el.className="move";el.textContent="✥";el.title="Drag to move the whole site";
+  moveMarker=new maplibregl.Marker({element:el,draggable:true}).setLngLat(centroid(R)).addTo(map);
+  let start=null,orig=null;
+  moveMarker.on("dragstart",()=>{start=moveMarker.getLngLat();orig=R.map(p=>p.slice());});
+  moveMarker.on("drag",()=>{const ll=moveMarker.getLngLat(),dx=ll.lng-start.lng,dy=ll.lat-start.lat;orig.forEach((p,i)=>R[i]=[p[0]+dx,p[1]+dy]);
+    vMarkers.forEach((m,i)=>m.setLngLat(R[i]));updateGeometryHandles(true);schedule(true);});
+  moveMarker.on("dragend",()=>{schedule(false);persist();});
+  updateSiteSource();
+}
+function updateGeometryHandles(skipMove){const R=state.ring;
+  mMarkers.forEach((m,i)=>{const p=R[i],q=R[(i+1)%R.length];m.setLngLat([(p[0]+q[0])/2,(p[1]+q[1])/2]);});
+  if(moveMarker&&!skipMove) moveMarker.setLngLat(centroid(R));
+  updateSiteSource();}
+function updateSiteSource(){const src=map.getSource("site");if(!src)return;
+  const R=state.drawing?state.draft:state.ring;
+  if(R.length<2){src.setData(EMPTY);return;}
+  const coords=R.concat(R.length>=3?[R[0]]:[]);
+  src.setData({type:"Feature",geometry:R.length>=3?{type:"Polygon",coordinates:[coords]}:{type:"LineString",coordinates:coords}});}
+
+$("btnRemove").onclick=removeSelected;
+document.addEventListener("keydown",e=>{if((e.key==="Delete"||e.key==="Backspace")&&state.sel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();removeSelected();}
+  if(e.key==="Escape"&&state.drawing) stopDraw(false);});
+function removeSelected(){if(state.sel<0||state.ring.length<=3)return;state.ring.splice(state.sel,1);state.sel=-1;$("btnRemove").disabled=true;buildHandles();schedule(false);persist();}
+
+/* drawing */
+let draftMarkers=[];
+$("btnDraw").onclick=()=>state.drawing?stopDraw(false):startDraw();
+$("btnFinish").onclick=()=>stopDraw(true);
+function startDraw(){state.drawing=true;state.draft=[];clearHandles();map.getSource("layout").setData(EMPTY);
+  $("btnDraw").setAttribute("aria-pressed","true");$("btnDraw").textContent="Cancel";$("btnFinish").hidden=false;$("drawHint").hidden=false;map.getCanvas().style.cursor="crosshair";updateSiteSource();}
+function stopDraw(commit){state.drawing=false;draftMarkers.forEach(m=>m.remove());draftMarkers=[];
+  $("btnDraw").setAttribute("aria-pressed","false");$("btnDraw").textContent="Draw site";$("btnFinish").hidden=true;$("drawHint").hidden=true;map.getCanvas().style.cursor="";
+  if(commit&&state.draft.length>=3){state.ring=state.draft;state.sel=-1;}
+  else if(commit){status("A site needs at least three corners.");}
+  buildHandles();schedule(false);persist();}
+map.on("click",e=>{if(!state.drawing)return;state.draft.push([e.lngLat.lng,e.lngLat.lat]);
+  const el=document.createElement("div");el.className="vtx";draftMarkers.push(new maplibregl.Marker({element:el}).setLngLat(e.lngLat).addTo(map));updateSiteSource();});
+
+/* basemap, search */
+$("btnBase").onclick=()=>{state.base=state.base==="osm"?"sat":"osm";
+  map.setLayoutProperty("osm","visibility",state.base==="osm"?"visible":"none");map.setLayoutProperty("sat","visibility",state.base==="sat"?"visible":"none");
+  $("btnBase").textContent=state.base==="osm"?"Satellite":"Street map";};
+$("searchForm").onsubmit=async e=>{e.preventDefault();const q=$("searchQ").value.trim();if(!q)return;
+  try{const r=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ph&q="+encodeURIComponent(q),{headers:{"Accept-Language":"en"}});
+    const j=await r.json();if(!j.length){status("No place found for “"+q+"”.");return;}
+    map.flyTo({center:[+j[0].lon,+j[0].lat],zoom:17});status("");}
+  catch(err){status("Search is unavailable right now.");}};
+
+/* imports */
+$("useBearings").onclick=()=>{try{const r=parseBearings($("bearings").value),c=map.getCenter(),F=frame([[c.lng,c.lat]]);
+    const cm=centroid(r.poly);state.ring=r.poly.map(p=>F.toLL([p[0]-cm[0],p[1]-cm[1]]));state.closure=r.closure;
+    buildHandles();fitRing();schedule(false);persist();status(r.closure>1?`Courses do not close by ${fmt(r.closure,2)} m. Check the description.`:"Courses placed. Drag the centre handle onto the tie point.");}
+  catch(e){status(e.message);}};
+$("useGeo").onclick=()=>{try{state.ring=parseCoords($("geojson").value);state.closure=0;buildHandles();fitRing();schedule(false);persist();status("Boundary loaded.");}catch(e){status(e.message);}};
+function fitRing(){const R=state.ring;if(R.length<3)return;const b=new maplibregl.LngLatBounds();R.forEach(p=>b.extend(p));map.fitBounds(b,{padding:90,maxZoom:18,duration:400});}
+
+/* ===== Solve scheduling ===== */
+let raf=null,pendingCoarse=true,fullTimer=null;
+function schedule(coarse){
+  if(!coarse){clearTimeout(fullTimer);fullTimer=setTimeout(()=>{runSolve(false);persist();},120);return;}
+  pendingCoarse=true; if(raf) return;
+  raf=requestAnimationFrame(()=>{raf=null;runSolve(true);});
+}
+function runSolve(coarse){
+  if(state.ring.length<3||state.drawing) {renderEmpty();return;}
+  const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
+  const F=frame(state.ring), poly=state.ring.map(F.toM), B=activeBOD();
+  const res=solve(o,poly,B,coarse,state.lastDeg);
+  if(!res.options.length) return;
+  state.result=res;state.F=F;state.o=o;
+  if(!coarse){state.opt=0;} state.opt=Math.min(state.opt,res.options.length-1);
+  state.lastDeg=res.options[state.opt].deg;
+  renderLayout();renderLive(coarse);if(!coarse)renderSpec();
+}
+function renderEmpty(){if(map.getSource("layout"))map.getSource("layout").setData(EMPTY);clearLabels();
+  $("live").innerHTML='<small>Draw a site or import a boundary to start.</small>';}
+
+/* ===== Rendering ===== */
+let labels=[];
+function clearLabels(){labels.forEach(m=>m.remove());labels=[];}
+function renderLayout(){
+  const op=state.result.options[state.opt],o=state.o,F=state.F,feats=[];clearLabels();
+  const toLL=(x,y)=>F.toLL(rot([x,y],op.a));
+  const poly=(q,kind,label)=>{const ring=[toLL(q[0],q[1]),toLL(q[2],q[1]),toLL(q[2],q[3]),toLL(q[0],q[3])];ring.push(ring[0]);
+    feats.push({type:"Feature",properties:{kind,label:label||""},geometry:{type:"Polygon",coordinates:[ring]}});
+    if(label){const c=toLL((q[0]+q[2])/2,(q[1]+q[3])/2);const el=document.createElement("div");el.className="lbl";el.textContent=label;labels.push(new maplibregl.Marker({element:el}).setLngLat(c).addTo(map));}};
+  for(const [r,type,meta] of op.placed){
+    if(type==="sub"){poly(r,"sub","Substation");continue;}
+    if(type==="pond"){poly(r,"pond","Retention");continue;}
+    if(type==="support"){poly(r,"support","Parking + yards");continue;}
+    const s=meta.s,r2=o.road/2,ix=r[0]+r2,iy=r[1]+r2;
+    poly(r,"road");
+    const part=(u0,v0,u1,v1,kind,label)=>poly(meta.swap?[ix+v0,iy+u0,ix+v1,iy+u1]:[ix+u0,iy+v0,ix+u1,iy+v1],kind,label);
+    if(s.Yd>0) part(0,0,s.Lm,s.Yd,"yard","");
+    part(s.La,s.Yd,s.La+s.L,s.Yd+s.D,"hall",`B${meta.i+1} ${fmt(s.m,0)} MW`);
+    if(s.Lm>s.La+s.L+0.5) part(s.La+s.L,s.Yd,s.Lm,s.Yd+s.D,"spare","");
+    part(0,s.Yd,s.La,s.Yd+s.D,"admin","");
+    part(0,s.Yd+s.D,s.Lm,s.Yd+s.D+s.Ed,"ec","");
+  }
+  map.getSource("layout").setData({type:"FeatureCollection",features:feats});
+  state.layoutGeo=feats;
+}
+function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
+  $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${o.targetMW}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${fmt(op.cov,0)}%</b><small>coverage</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
+  <div class="lim">${coarse?"Updating… ":""}${esc(op.limit)}${op.flags.length?` <span style="color:var(--bad)">${op.flags.length} flag${op.flags.length>1?"s":""}</span>`:""}</div>`;}
+function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activeBOD(),n=state.result.options.length;
+  $("results").innerHTML=`<h2>Spec sheet, option ${String.fromCharCode(65+state.opt)} of ${n}</h2>
+  ${B.placeholder?'<div class="banner">Placeholder design values. Import your basis of design profile before relying on these numbers.</div>':''}
+  ${o.density!=="ent"?'<div class="banner">AI-ready values are indicative industry assumptions.</div>':''}
+  ${state.closure>1?`<p class="flag">Title courses do not close by ${fmt(state.closure,2)} m.</p>`:""}
+  <div class="limit">${esc(op.limit)}</div>${op.flags.map(f=>`<p class="flag">${esc(f)}</p>`).join("")}
+  <table>${op.rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("")}</table>
+  <p class="hint">${esc(op.grid)}</p>
+  <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
+  <div class="legend"><span style="--c:${COLORS.hall}">Data building</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:${COLORS.yard}">Heat rejection yard</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Road</span></div>`;}
+$("btnNext").onclick=()=>{if(!state.result)return;state.opt=(state.opt+1)%state.result.options.length;state.lastDeg=state.result.options[state.opt].deg;renderLayout();renderLive(false);renderSpec();};
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+/* ===== Exports ===== */
+function base(){return ($("projName").value.trim()||"dc-concept").replace(/[^\w\-]+/g,"-")+"-option-"+String.fromCharCode(65+state.opt);}
+function download(name,data,type){const b=data instanceof Blob?data:new Blob([data],{type});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
+$("btnCSV").onclick=()=>{if(!state.result)return;const op=state.result.options[state.opt],q=s=>'"'+String(s).replace(/"/g,'""')+'"';
+  const rows=[["Item","Value"],["Profile",activeBOD().name],...op.rows,["Limiting factor",op.limit],...op.flags.map(f=>["Flag",f]),["Grid",op.grid],["Site corners (lon lat)",state.ring.map(p=>p[0].toFixed(6)+" "+p[1].toFixed(6)).join("; ")]];
+  download(base()+".csv",rows.map(r=>r.map(q).join(",")).join("\n"),"text/csv");};
+$("btnGeo").onclick=()=>{if(!state.result)return;const ring=state.ring.concat([state.ring[0]]);
+  download(base()+".geojson",JSON.stringify({type:"FeatureCollection",features:[{type:"Feature",properties:{kind:"site"},geometry:{type:"Polygon",coordinates:[ring]}},...state.layoutGeo]}),"application/geo+json");};
+$("btnPNG").onclick=()=>{if(!state.result)return;
+  map.once("render",()=>{const mc=map.getCanvas(),op=state.result.options[state.opt],o=state.o,strip=110*devicePixelRatio;
+    const c=document.createElement("canvas");c.width=mc.width;c.height=mc.height+strip;const g=c.getContext("2d");
+    g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);
+    try{g.drawImage(mc,0,0);}catch(e){}
+    const d=devicePixelRatio;g.fillStyle="#1D2B36";g.font=`600 ${22*d}px Barlow Condensed, Arial`;
+    g.fillText(`${$("projName").value||"DC concept"}: ${fmt(op.it,0)} MW IT of ${o.targetMW}, ${fmt(op.fac,1)} MW facility, ${fmt(op.cov,0)}% coverage`,14*d,mc.height+34*d);
+    g.font=`${15*d}px Barlow, Arial`;g.fillText(op.limit,14*d,mc.height+60*d);
+    g.fillStyle="#5E6B75";g.fillText(`${DLABEL[o.density]}, ${o.elec}, ${activeBOD().name}. ${state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors"}. Concept only.`,14*d,mc.height+86*d);
+    try{c.toBlob(b=>download(base()+".png",b),"image/png");}catch(e){status("The map layer blocked image export. Try the street map.");}
+  });map.triggerRepaint();};
+
+/* ===== Projects ===== */
+function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
+  return {app:"dccg",v:1,name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
+  [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
+  $("density").value=p.density;$("projName").value=p.name;Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
+  state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
+  if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
+function drawProjects(){const l=lsGet(LS_PROJ,[]);
+  $("projList").innerHTML=l.length?l.map((p,i)=>`<li><span>${esc(p.name)}</span><span><button data-o="${i}">Open</button><button data-d="${i}">Delete</button></span></li>`).join(""):'<li class="hint">No saved projects on this device.</li>';
+  $("projList").querySelectorAll("[data-o]").forEach(b=>b.onclick=()=>restore(l[+b.dataset.o]));
+  $("projList").querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{l.splice(+b.dataset.d,1);lsSet(LS_PROJ,l);drawProjects();});}
+$("saveLocal").onclick=()=>{const s=snapshot(),l=lsGet(LS_PROJ,[]).filter(p=>p.name!==s.name);l.push(s);status(lsSet(LS_PROJ,l)?"Saved on this device.":"This browser blocked storage.");drawProjects();};
+$("exportProj").onclick=()=>download((snapshot().name).replace(/[^\w\-]+/g,"-")+".dccg.json",JSON.stringify(snapshot(),null,1),"application/json");
+$("importProj").onclick=()=>$("projFile").click();
+$("projFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const p=JSON.parse(await f.text());if(p.app!=="dccg")throw new Error("Not a project file.");restore(p);}catch(err){status("Could not open project: "+err.message);}e.target.value="";};
+let persistT=null;function persist(){clearTimeout(persistT);persistT=setTimeout(()=>lsSet("dccg.lastSession",snapshot()),400);}
+function status(t){$("status").textContent=t;if(t)setTimeout(()=>{if($("status").textContent===t)$("status").textContent="";},8000);}
+
+/* ===== Init ===== */
+function init(){
+  drawBOD();applyDefaults();drawProjects();
+  const last=lsGet("dccg.lastSession",null);
+  if(last&&last.ring&&last.ring.length>=3){restore(last);return;}
+  const c=map.getCenter(),F=frame([[c.lng,c.lat]]);
+  state.ring=[[-90,-100],[90,-100],[90,100],[-90,100]].map(F.toLL);
+  buildHandles();schedule(false);
+}
+</script>
+</body>
+</html>
