@@ -224,6 +224,10 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
       <div><label for="subSqm">Substation (sqm, 0 = auto)</label><input id="subSqm" type="number" min="0" step="100"></div>
       <div><label for="subMargin">Substation margin (m)</label><input id="subMargin" type="number" min="0" step="1"></div>
     </div>
+    <div class="row">
+      <div><label for="roofTiers">Chiller deck tiers</label><input id="roofTiers" type="number" min="1" max="2" step="1"></div>
+      <div></div>
+    </div>
     <p class="hint">These override the profile for this site only. Use Export profile to keep them.</p>
   </details>
 
@@ -275,7 +279,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 /* ===== Placeholder basis of design (generic, not from any company document) ===== */
 const PLACEHOLDER = {
   name:"Placeholder values", placeholder:true, version:1,
-  moduleMW:8, rowPitch:6.0, circFactor:1.22, floorM:6.0, roofPlantM:6, rackKgLimit:2000, dockApron:30, ecLevels:0, roofShare:0.9, yardClear:15, subSqm:0, subMargin:8, fenceInset:0, clearZone:3,
+  moduleMW:8, rowPitch:6.0, circFactor:1.22, floorM:6.0, roofPlantM:6, rackKgLimit:2000, dockApron:30, ecLevels:0, roofShare:0.9, yardClear:15, subSqm:0, subMargin:8, fenceInset:0, clearZone:3, roofTiers:1,
   gensPerModule:5, genKVA:3000, fuelHours:24, fuelLPerGen:15000,
   elec:{ EROOM:{crit:150, ecPerMW:200, admin:3000}, EMOD:{crit:70, ecPerMW:400, admin:3000} },
   density:{
@@ -317,14 +321,15 @@ function buildingSpec(m,o,B,dens){
   const D=Math.max(30,Math.min(75,Math.sqrt(foot/2)));
   const L=foot/D, adminFoot=E.admin/3, La=Math.max(18,adminFoot/D), ecLevels=(B.ecLevels>0?B.ecLevels:o.storeys), ecFoot=E.ecPerMW*m/Math.max(1,ecLevels);
   const roofShare=(B.roofShare>0&&B.roofShare<=1)?B.roofShare:0.9;
-  const hrNeed=d.hr*m, roofCap=foot*roofShare, spill=Math.max(0,hrNeed-roofCap);
+  const tiers=Math.min(2,Math.max(1,Math.round(o.roofTiers||B.roofTiers||1)));
+  const hrNeed=d.hr*m, roofCap=foot*roofShare*tiers, spill=Math.max(0,hrNeed-roofCap);
   const Lm=Math.max(La+L,Math.sqrt((foot+adminFoot+ecFoot+spill)*1.15));
   const Lh=Lm-La;
   const Ed=Math.max(12,ecFoot/Lh), Yd=spill>0?Math.max(10,spill/Lh):0;
   const apron=o.dockApron, H=Math.max(apron+D,Yd+D+Ed);
   return {m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
     hrNeed,roofHR:Math.min(hrNeed,roofCap),roofCap,ecLevels,spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
-    pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM:0)+1.5};
+    pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
 }
 
 /* ===== circulation =====
@@ -558,9 +563,11 @@ function solveInfill(o,poly,B,siteArea,angles){
     storeys++;
   }
   if(!bands) return null;
-  /* the chiller deck sits over the data halls only, as in the GRD */
+  /* the chiller deck sits over the data halls and mechanical rooms, never
+     over the electrical rooms */
   const roofShare=(B.roofShare>0&&B.roofShare<=1.5)?B.roofShare:0.9;
-  const hrNeed=d.hr*mw, roofCap=bands.hall*roofShare;
+  const tiers=Math.min(2,Math.max(1,Math.round(o.roofTiers||B.roofTiers||1)));
+  const hrNeed=d.hr*mw, roofCap=(bands.hall+bands.crit)*roofShare*tiers;
   const plantFloors=Math.max(0,Math.ceil((hrNeed-roofCap)/F));
   const height=(storeys+plantFloors)*B.floorM+B.roofPlantM+1.5;
   const zones=[];
@@ -799,9 +806,9 @@ function solve(o,poly,B,coarse,hintDeg){
       return false;};
     /* pins are settled first and held aside, so the retry pass cannot clear them */
     const pinned=[],fixed=new Set();
+    /* each pin stays in "placed" so later pins keep clear of it */
     for(let i=0;i<pins.length&&i<specs.length;i++){
-      if(placePinned(specs[i],{i,s:specs[i]},pins[i])){pinned.push(placed.pop());fixed.add(i);}}
-    pinned.forEach(q=>placed.push(q));
+      if(placePinned(specs[i],{i,s:specs[i]},pins[i])){pinned.push(placed[placed.length-1]);fixed.add(i);}}
     const pinFloor=placed.length, pinsPlaced=pinned.length;
     const bySize=specs.map((x,i)=>i).sort((p,q)=>specs[q].Lm*specs[q].H-specs[p].Lm*specs[p].H);
     const placeBuildings=(mode,order,loose)=>{let mw=0;const built=[],missed=[];
@@ -1014,6 +1021,7 @@ circulation:"How roads are generated. Internal runs a spine drive through the mi
 padInSetback:"When on, only the structures themselves (data buildings, energy centres, substation, retention) must stay behind the setback line. Their road and yard clearances, the internal roads and the parking may use the setback band, as driveways and open hardstanding usually can. Turn off for the strictest reading, where everything stays behind the line.",
 fenceInset:"How far inside the property line the security fence runs. 0 puts it on the boundary.",
 clearZone:"A band inside the fence kept clear of everything except the gate drive, so the fence can be watched and patrolled.",
+roofTiers:"Levels of the roof chiller deck. 1 is the GRD baseline (air-cooled chillers on one gantry level). 2 is the BOD\u2019s stacked option, with water-cooled chillers and dry air coolers on two roof levels (R2 and R3), which roughly doubles the heat rejection the roof can carry and adds about 6 m of height.",
 supportSqm:"Ground area for staff and visitor parking, laydown and support yards. Set 0 if parking goes inside the buildings or off site. It may be placed as one yard or split into two.",
 subSqm:"Plot area for the utility substation. 0 sizes it automatically from the facility load, assuming an air-insulated substation. A compact gas-insulated (GIS) substation needs far less land; enter its area to test it, and confirm with the utility.",
 subMargin:"Fence and clearance margin added around the substation plot on every side, in metres.",
@@ -1113,6 +1121,7 @@ const CSV_ROWS=[
  ["subMargin","Fence and clearance margin added around the substation plot, m"],
  ["fenceInset","Security fence distance inside the property line, m (0 = on the boundary)"],
  ["clearZone","Clear zone kept inside the security fence, m"],
+ ["roofTiers","Roof chiller deck levels: 1 = GRD baseline, 2 = stacked option (R2 and R3)"],
  ["roofShare","Share of the data hall roof usable for the chiller deck, 0 to 1 (0.9 = 90%)"],
  ["rowPitch","Rack row pitch: one cold aisle, two rack rows and one hot aisle, m"],
  ["elec.EROOM.crit","EROOM: critical support area inside the building, sqm per MW"],
@@ -1232,16 +1241,16 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
 
 /* ===== State and form ===== */
 const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1,pins:[],pinning:false,psel:-1};
-const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","fenceInset","clearZone"];
+const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","fenceInset","clearZone","roofTiers"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
-  s("dockApron",B.dockApron||30);s("supportSqm",P.supportSqm!=null?P.supportSqm:2000);s("subSqm",B.subSqm||0);s("subMargin",B.subMargin>=0?B.subMargin:8);s("fenceInset",B.fenceInset>=0?B.fenceInset:0);s("clearZone",B.clearZone>=0?B.clearZone:3);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
+  s("dockApron",B.dockApron||30);s("supportSqm",P.supportSqm!=null?P.supportSqm:2000);s("subSqm",B.subSqm||0);s("subMargin",B.subMargin>=0?B.subMargin:8);s("fenceInset",B.fenceInset>=0?B.fenceInset:0);s("clearZone",B.clearZone>=0?B.clearZone:3);s("roofTiers",B.roofTiers>=1?B.roofTiers:1);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
   applyDensity();}
 /* Put one group of fields back to the values in the active basis of design. */
 const RESET_GROUPS={
   profile:["targetMW","kw"],
   rules:["setback","maxH","maxCov","storeys","fenceInset","clearZone"],
-  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin"]
+  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","roofTiers"]
 };
 function profileValue(id){
   const B=activeBOD(),P=B.profile[state.profile],D=B.density[state.density];
@@ -1260,6 +1269,7 @@ function profileValue(id){
     case "subMargin": return B.subMargin>=0?B.subMargin:8;
     case "fenceInset": return B.fenceInset>=0?B.fenceInset:0;
     case "clearZone": return B.clearZone>=0?B.clearZone:3;
+    case "roofTiers": return B.roofTiers>=1?B.roofTiers:1;
     case "kw": return D.kw;
     case "sqmRack": return D.sqmRack;
     case "liquid": return D.liquid;
@@ -1423,7 +1433,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
     massing:$("massing").value,faceGate:$("faceGate").checked,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
-    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin"))};}
+    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1)))};}
 
 /* ===== Map ===== */
 const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,preserveDrawingBuffer:true,attributionControl:{compact:true},
@@ -1729,7 +1739,8 @@ function renderLayout(){
     const rc=op.rect,el=document.createElement("div");el.className="lbl";
     /* roof chiller deck over the building, drawn from the end away from the
        dock, sized to the heat rejection the roof carries */
-    const hz=op.zones.find(z=>z.kind==="hall");
+    const hzs=op.zones.filter(z=>z.kind==="hall"||z.kind==="yard");
+    const hz=hzs.length?{r:[Math.min(...hzs.map(z=>z.r[0])),Math.min(...hzs.map(z=>z.r[1])),Math.max(...hzs.map(z=>z.r[2])),Math.max(...hzs.map(z=>z.r[3]))]}:null;
     if(b0.roofHR>0&&hz){const h=hz.r,W=h[2]-h[0],H=h[3]-h[1],f=Math.min(1,b0.roofHR/Math.max(1,W*H)),ins=Math.min(2.5,Math.min(W,H)*0.04);
       const dz=op.zones.find(z=>z.kind==="apron")||op.zones[0],dc=dz?[(dz.r[0]+dz.r[2])/2,(dz.r[1]+dz.r[3])/2]:[h[0],h[1]];
       let r;
