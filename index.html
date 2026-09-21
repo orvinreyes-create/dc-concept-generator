@@ -66,6 +66,16 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 th{padding:4px 0;border-bottom:1px solid var(--line);text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;opacity:.65}
 th:last-child{text-align:right}
 .opmenu{position:relative;display:inline-block}
+.ff{position:absolute;top:108px;right:10px;z-index:6;width:min(440px,calc(100% - 20px));max-height:calc(100% - 150px);overflow:auto;box-shadow:0 6px 18px rgba(0,0,0,.18);border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--ink);padding:10px;display:flex;flex-direction:column;gap:8px}
+.ff[hidden]{display:none}
+.ff-head{display:flex;flex-direction:column;gap:2px}
+#ffSteps label{display:flex;gap:7px;align-items:flex-start;font-size:13px;color:var(--ink);margin:4px 0}
+#ffSteps input{width:auto;margin-top:2px}
+.ff-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ff-bar progress{flex:1;min-width:80px}
+.ff table{border-collapse:collapse;width:100%;font-size:13px}
+.ff td,.ff th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+.ff .ok{color:#2e7d4f}.ff .bad{color:#b3412e}
 .opmenu-list{position:absolute;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:4px;z-index:20;min-width:130px}
 .opmenu-list[hidden]{display:none}
 .pnode{width:17px;height:17px;border-radius:50%;background:#fff;border:3px solid #2D6A7A;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
@@ -228,6 +238,10 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
       <div><label for="subMargin">Substation margin (m)</label><input id="subMargin" type="number" min="0" step="1"></div>
     </div>
     <div class="row">
+      <div><label for="subAspect">Substation max aspect (x:1)</label><input id="subAspect" type="number" min="1" max="8" step="0.5"></div>
+      <div><label for="subMinSide">Substation min side (m)</label><input id="subMinSide" type="number" min="5" step="1"></div>
+    </div>
+    <div class="row">
       <div><label for="roofTiers">Chiller deck tiers</label><input id="roofTiers" type="number" min="1" max="2" step="1"></div>
       <div><label for="yardClear">Yard clearance (m)</label><input id="yardClear" type="number" min="0" step="1"></div>
     </div>
@@ -263,6 +277,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnSubPin" type="button" aria-pressed="false">Pin substation</button>
     <button class="btn" id="btnBase" type="button">Satellite</button>
     <button class="btn" id="btnOpt" type="button" title="Search harder: every building order, packing style and road frontage, for up to 8 seconds">Optimise</button>
+    <button class="btn" id="btnForce" type="button" aria-expanded="false" title="Relax design values one step at a time until the target fits, then undo what was not needed">Force fit</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
     <span class="opmenu"><button class="btn" id="btnOne" type="button" aria-haspopup="true" aria-expanded="false">One-pager</button>
       <span class="opmenu-list" id="oneMenu" hidden><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button></span></span>
@@ -271,6 +286,12 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnGeo" type="button">GeoJSON</button>
   </div>
   <div class="drawhint" id="drawHint" hidden>Click the map to place corners. Press Finish when done.</div>
+  <div class="ff" id="ffPanel" hidden>
+    <div class="ff-head"><b>Force fit</b><span class="hint">Finds the smallest set of concessions that reaches the MW target. Pins, roads, the gate, the MW mix, the setback and rack-level BOD values never change.</span></div>
+    <div id="ffSteps"></div>
+    <div class="ff-bar"><button class="btn" id="ffRun" type="button">Run</button><button class="btn" id="ffClose" type="button">Close</button><progress id="ffProg" max="1" value="0" hidden></progress><span id="ffStat" class="hint"></span></div>
+    <div id="ffOut"></div>
+  </div>
   <div class="live" id="live"></div>
 </div>
 
@@ -671,6 +692,8 @@ function solve(o,poly,B,coarse,hintDeg){
   const targetMW=specs.reduce((t,s)=>t+s.m,0);
   const facTarget=specs.reduce((t,s)=>t+s.m*s.pue,0);
   const subArea=(o.subSqm>0?o.subSqm:B.subSqm>0?B.subSqm:0)||(facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20);
+  const subMaxAsp=Math.max(1,o.subAspect>0?o.subAspect:4),subMinSide=Math.max(5,o.subMinSide>0?o.subMinSide:30),
+    SUB_AS=[1,1.5,2,2.5,3,4,5,6,8].filter(x=>x<=subMaxAsp+1e-9);
   const subMargin=o.subMargin>=0&&o.subMargin!==undefined&&!isNaN(o.subMargin)?o.subMargin:(B.subMargin>=0?B.subMargin:8);
   /* Boundary rules. The perimeter band (fence inset plus the clear zone inside
      it) is kept free of everything. With padInSetback, only the structures
@@ -797,7 +820,7 @@ function solve(o,poly,B,coarse,hintDeg){
           if(Math.min(a0,b0)<minSide) continue;
           if(tryPlace(a0+margin,b0+margin,kind,{area},as!==1,c,edgeMode)) return true;}
       return false;};
-    const placeSub=()=>subPinned||placeFlex(subArea,"sub",YARD_CLEAR+o.road,subMargin,30,[1,1.5,2,2.5,3,4]);
+    const placeSub=()=>subPinned||placeFlex(subArea,"sub",YARD_CLEAR+o.road,subMargin,subMinSide,SUB_AS);
     const placeSupport=()=>{
       if(placeFlex(supportArea,"support",o.road+6,0,16,[2,3,4,1.5,6])) return true;
       const n0=placed.length,h=supportArea/2;
@@ -835,7 +858,7 @@ function solve(o,poly,B,coarse,hintDeg){
     let subPinned=false;
     if(o.subPin){const c=rot(o.subPin,-a),mg=subMargin;
       let best=null,bd=Infinity;
-      for(const as of [1,1.5,2,2.5,3,4]){const a0=Math.sqrt(subArea*as),b0=subArea/a0;if(Math.min(a0,b0)<30)continue;
+      for(const as of SUB_AS){const a0=Math.sqrt(subArea*as),b0=subArea/a0;if(Math.min(a0,b0)<subMinSide)continue;
         for(const [ww,hh] of [[a0+mg,b0+mg],[b0+mg,a0+mg]]){const reach=Math.min(ww,hh)*0.45,nd=Math.max(2,step/2);
           for(let dy=0;dy<=reach;dy+=nd) for(let dx=0;dx<=reach;dx+=nd) for(const [sx,sy] of (dx||dy?[[1,1],[-1,1],[1,-1],[-1,-1]]:[[1,1]])){
             const d=Math.hypot(dx,dy);if(d>=bd)continue;
@@ -976,7 +999,7 @@ function solve(o,poly,B,coarse,hintDeg){
   for(const r of res){ if(top.length>=3) break; if(top.indexOf(r)>=0) continue;
     if(top.some(t=>t.type===r.type&&t.deg===r.deg)) continue;
     if(top.length&&r.mw<top[0].mw*0.5) continue; top.push(r);}
-  return {options:top.map(r=>summarise(r,o,B,siteArea,subArea,pondArea,supportArea)),siteArea,best:top.length?top[0].score:-Infinity};
+  return {options:top.map(r=>Object.assign(summarise(r,o,B,siteArea,subArea,pondArea,supportArea),{subOK:!!r.subOK})),siteArea,subArea,best:top.length?top[0].score:-Infinity};
 }
 
 function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
@@ -987,7 +1010,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const liquidMW=sum(s=>s.m*s.liquid/100),cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
   const maxHt=L.length?Math.max(...L.map(s=>s.height)):0,flags=[];
   const heavy=L.filter(s=>s.rackKg>B.rackKgLimit);
-  if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to 4:1, no side under 30 m, plus a "+(o.subMargin>=0?o.subMargin:(B.subMargin>=0?B.subMargin:8))+" m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
+  if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to "+(o.subAspect>0?o.subAspect:4)+":1, no side under "+(o.subMinSide>0?o.subMinSide:30)+" m, plus a "+(o.subMargin>=0?o.subMargin:(B.subMargin>=0?B.subMargin:8))+" m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
   if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
   if(!r.supOK) flags.push("Parking and support yards ("+fmt(supportArea,0)+" sqm, tried as one yard or two, no side under 16 m) do not fit. Try Optimise, or allow for parking inside the buildings.");
   if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
@@ -1068,6 +1091,8 @@ yardClear:"Clear distance kept around each building\u2019s external electrical a
 roofTiers:"Levels of the roof chiller deck. 1 is the GRD baseline (air-cooled chillers on one gantry level). 2 is the BOD\u2019s stacked option, with water-cooled chillers and dry air coolers on two roof levels (R2 and R3), which roughly doubles the heat rejection the roof can carry and adds about 6 m of height.",
 supportSqm:"Ground area for staff and visitor parking, laydown and support yards. Set 0 if parking goes inside the buildings or off site. It may be placed as one yard or split into two.",
 subSqm:"Plot area for the utility substation. 0 sizes it automatically from the facility load, assuming an air-insulated substation. A compact gas-insulated (GIS) substation needs far less land; enter its area to test it, and confirm with the utility.",
+subAspect:"Longest the substation plot may be relative to its width. 4 means anything from square to 4:1. Longer, thinner plots fit along a boundary strip but lengthen busbar and cable runs; confirm with the electrical engineer.",
+subMinSide:"Shortest side the substation plot may have, before the margin is added. Below about 30 m an air-insulated switchyard gets hard to lay out; a GIS substation can go narrower.",
 subMargin:"Fence and clearance margin added around the substation plot on every side, in metres.",
 dockApron:"Depth of hardstanding in front of the loading dock for a truck to reverse and turn. The GRD puts two truck docks at the ground floor of the admin block, so this apron sits alongside it.",
 bandAxis:"Which way the zones inside an infill building run. Lengthwise keeps the electrical and mechanical rooms along the full length of the halls, which shortens busway runs and lets rack rows run the long way, as the GRD does. Crosswise turns them through 90 degrees: useful for testing a frontage or a phasing split, but it usually costs hall capacity. Campus layouts always run lengthwise.",
@@ -1286,16 +1311,16 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
 
 /* ===== State and form ===== */
 const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1,pins:[],pinning:false,psel:-1,subPinLL:null,subPinning:false};
-const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","fenceInset","clearZone","roofTiers","yardClear"];
+const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","fenceInset","clearZone","roofTiers","yardClear","subAspect","subMinSide"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
-  s("dockApron",B.dockApron||30);s("supportSqm",P.supportSqm!=null?P.supportSqm:2000);s("subSqm",B.subSqm||0);s("subMargin",B.subMargin>=0?B.subMargin:8);s("fenceInset",B.fenceInset>=0?B.fenceInset:0);s("clearZone",B.clearZone>=0?B.clearZone:3);s("roofTiers",B.roofTiers>=1?B.roofTiers:1);s("yardClear",B.yardClear>0?B.yardClear:15);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
+  s("dockApron",B.dockApron||30);s("supportSqm",P.supportSqm!=null?P.supportSqm:2000);s("subSqm",B.subSqm||0);s("subMargin",B.subMargin>=0?B.subMargin:8);s("fenceInset",B.fenceInset>=0?B.fenceInset:0);s("clearZone",B.clearZone>=0?B.clearZone:3);s("roofTiers",B.roofTiers>=1?B.roofTiers:1);s("yardClear",B.yardClear>0?B.yardClear:15);s("subAspect",4);s("subMinSide",30);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
   applyDensity();}
 /* Put one group of fields back to the values in the active basis of design. */
 const RESET_GROUPS={
   profile:["targetMW","kw"],
   rules:["setback","maxH","maxCov","storeys","fenceInset","clearZone"],
-  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","roofTiers","yardClear"]
+  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","subAspect","subMinSide","roofTiers","yardClear"]
 };
 function profileValue(id){
   const B=activeBOD(),P=B.profile[state.profile],D=B.density[state.density];
@@ -1316,6 +1341,8 @@ function profileValue(id){
     case "clearZone": return B.clearZone>=0?B.clearZone:3;
     case "roofTiers": return B.roofTiers>=1?B.roofTiers:1;
     case "yardClear": return B.yardClear>0?B.yardClear:15;
+    case "subAspect": return 4;
+    case "subMinSide": return 30;
     case "kw": return D.kw;
     case "sqmRack": return D.sqmRack;
     case "liquid": return D.liquid;
@@ -1510,7 +1537,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
     massing:$("massing").value,faceGate:$("faceGate").checked,ecPos:$("ecPos").value,subPinLL:state.subPinLL,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
-    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear")};}
+    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear"),subAspect:g("subAspect")||4,subMinSide:g("subMinSide")||30};}
 
 /* ===== Map ===== */
 const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,preserveDrawingBuffer:true,attributionControl:{compact:true},
@@ -1685,12 +1712,12 @@ function schedule(coarse){
   pendingCoarse=true; if(raf) return;
   raf=requestAnimationFrame(()=>{raf=null;runSolve(true);});
 }
-function runSolve(coarse,optimise){
-  if(state.ring.length<3||state.drawing) {renderEmpty();return;}
+function runSolve(coarse,optimise,ov,budget,probe){
+  if(state.ring.length<3||state.drawing) {if(!probe)renderEmpty();return;}
   /* sessions saved before a field existed leave it blank: fill from the profile */
   NUM.forEach(id=>{if($(id).value===""){const v=profileValue(id);if(v!=null)$(id).value=v;}});
-  const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
-  if(optimise){o.optimise=true;o.optimiseUntil=Date.now()+8000;}
+  const o=Object.assign(readOpts(),ov||{}); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
+  if(optimise){o.optimise=true;o.optimiseUntil=Date.now()+(budget||8000);}
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=effectiveBOD(o);
   o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
   o.pins=(o.pinsLL||[]).map(F.toM);
@@ -1699,6 +1726,7 @@ function runSolve(coarse,optimise){
     ? o.roadsLL.edges.map(e=>({a:F.toM(o.roadsLL.nodes[e[0]]),b:F.toM(o.roadsLL.nodes[e[1]]),w:o.roadsLL.w||o.road}))
     : null;
   const res=solve(o,poly,B,coarse,state.lastDeg);
+  if(probe) return {res,o};
   if(!res.options.length) return;
   const cen=F.toLL(poly.reduce((t,p)=>[t[0]+p[0]/poly.length,t[1]+p[1]/poly.length],[0,0]));
   const dist=REFS.map(r=>[r.name,fmt(haversineKm(cen,r.ll),1)+" km","distRow"]);
@@ -1913,6 +1941,76 @@ $("btnOpt").onclick=()=>{
     $("btnOpt").disabled=false;$("btnOpt").textContent="Optimise";
     const op=state.result&&state.result.options[0];
     status(op?("Optimised in "+((Date.now()-t)/1000).toFixed(1)+" s: "+fmt(op.it,0)+" MW"+(before?" (was "+fmt(before.it,0)+" MW)":"")+". Changing any input re-solves normally."):"");},60);};
+
+/* ===== Force fit: relax design values step by step until the target fits,
+   then undo every relaxation that turns out not to be needed. ===== */
+const FF_STEPS=[
+ {id:"layout",name:"Layout search only (rotation, order, splits, energy-centre side)",fixed:true,apply:()=>({})},
+ {id:"setback",name:"Roads and yard clearances in the setback; no fence clear zone",
+  apply:o=>(o.padInSetback&&!(o.clearZone>0))?null:{padInSetback:true,clearZone:0}},
+ {id:"pond",name:"Retention and parking off the ground plane (underground tank, structured or off-site parking)",
+  apply:o=>(o.pond>0||o.supportSqm>0)?{pond:0,supportSqm:0}:null},
+ {id:"tiers",name:"Two-tier roof chiller deck",apply:o=>o.roofTiers<2?{roofTiers:2}:null},
+ {id:"clear",name:"Tighter clearances: yard 8 m, substation margin 4 m",
+  apply:o=>{const p={};if((o.yardClear>0?o.yardClear:15)>8)p.yardClear=8;if(!(o.subMargin<=4))p.subMargin=4;return Object.keys(p).length?p:null;}},
+ {id:"sub",name:"Longer, thinner substation plot: up to 5:1, 20 m min side",
+  apply:o=>((o.subAspect||4)<5||(o.subMinSide||30)>20)?{subAspect:Math.max(o.subAspect||4,5),subMinSide:Math.min(o.subMinSide||30,20)}:null},
+ {id:"gis",name:"Compact gas-insulated (GIS) substation at half the plot area",
+  apply:(o,c)=>c.subArea>1000?{subSqm:Math.max(1000,Math.round(c.subArea*0.5/100)*100)}:null},
+ {id:"storeys",name:"One more storey (within the height limit)",
+  apply:o=>((o.storeys+1)*6+7.5<=o.maxH)?{storeys:o.storeys+1}:null}];
+const FF_LABEL={padInSetback:["Clearances in setback",v=>v?"on":"off"],clearZone:["Fence clear zone",v=>fmt(v||0,1)+" m"],
+ pond:["Retention",v=>fmt(v||0,1)+"% of site"],supportSqm:["Parking and support",v=>fmt(v||0,0)+" sqm"],roofTiers:["Chiller deck tiers",v=>String(v)],
+ yardClear:["Yard clearance",v=>fmt(v>0?v:15,0)+" m"],subMargin:["Substation margin",v=>fmt(v,0)+" m"],subAspect:["Substation max aspect",v=>v+":1"],
+ subMinSide:["Substation min side",v=>fmt(v,0)+" m"],subSqm:["Substation area",v=>v>0?fmt(v,0)+" sqm":"auto"],storeys:["Storeys",v=>String(v)]};
+const FF_INPUT={clearZone:"clearZone",pond:"pondPct",supportSqm:"supportSqm",roofTiers:"roofTiers",yardClear:"yardClear",subMargin:"subMargin",
+ subAspect:"subAspect",subMinSide:"subMinSide",subSqm:"subSqm",storeys:"storeys"};
+state.ffAllow=state.ffAllow||Object.fromEntries(FF_STEPS.map(x=>[x.id,true]));
+function ffDrawSteps(){$("ffSteps").innerHTML=FF_STEPS.map((x,i)=>`<label><input type="checkbox" data-ff="${x.id}" ${x.fixed?"checked disabled":(state.ffAllow[x.id]?"checked":"")}> ${i+1}. ${esc(x.name)}</label>`).join("");
+  $("ffSteps").querySelectorAll("input[data-ff]").forEach(c=>c.onchange=()=>{state.ffAllow[c.dataset.ff]=c.checked;});}
+$("btnForce").onclick=()=>{const p=$("ffPanel"),open=p.hidden;p.hidden=!open;$("btnForce").setAttribute("aria-expanded",String(open));if(open)ffDrawSteps();};
+$("ffClose").onclick=()=>{$("ffPanel").hidden=true;$("btnForce").setAttribute("aria-expanded","false");};
+function ffProbe(ov){const r=runSolve(false,true,ov,4000,true);if(!r||!r.res.options.length)return {it:0,ok:false,subArea:r?r.res.subArea:0};
+  const op=r.res.options[0],t=targetOf(r.o);return {it:op.it,ok:op.it>=t-0.01&&op.subOK,sub:op.subOK,subArea:r.res.subArea,t};}
+$("ffRun").onclick=()=>{
+  if(state.ring.length<3){status("Draw a site first.");return;}
+  const base=readOpts(),steps=FF_STEPS.filter(x=>x.fixed||state.ffAllow[x.id]);
+  const merge=list=>Object.assign({},...list.map(a=>a.patch));
+  let active=[],ctx={subArea:0},i=0,best=null,log=[],phase="up",j=-1,final=null,calls=0,est=steps.length+3;
+  $("ffRun").disabled=true;$("ffOut").innerHTML="";$("ffProg").hidden=false;$("ffProg").value=0;
+  const tick=msg=>{$("ffStat").textContent=msg;$("ffProg").value=Math.min(0.98,calls/est);};
+  const done=()=>{$("ffRun").disabled=false;$("ffProg").hidden=true;$("ffStat").textContent="";ffShow(base,active,log,final,best);};
+  const step=()=>{
+    if(phase==="up"){
+      if(i>=steps.length){final=null;return done();}
+      const x=steps[i++],patch=x.apply(base,ctx);
+      if(!patch){log.push({x,skip:true});return setTimeout(step,0);}
+      active.push({x,patch});tick("Trying step "+i+" of "+steps.length+": "+x.name+"…");
+      setTimeout(()=>{const r=ffProbe(merge(active));calls++;if(!ctx.subArea)ctx.subArea=r.subArea;
+        const prev=log.filter(l=>!l.skip).slice(-1)[0];log.push({x,it:r.it,gain:r.it-(prev?prev.it:0)});
+        if(!best||r.it>best.it||(r.it===best.it&&r.ok))best={it:r.it,ok:r.ok,t:r.t,active:active.slice()};
+        if(r.ok){final=r;phase="down";j=active.length-1;}
+        step();},30);return;}
+    /* undo relaxations that the fit no longer needs, latest first */
+    while(j>=0&&active[j].x.fixed) j--;
+    if(j<0) return done();
+    const trial=active.filter((_,k)=>k!==j),name=active[j].x.name;est=Math.max(est,calls+j+1);
+    tick("Checking whether “"+name+"” is needed…");
+    setTimeout(()=>{const r=ffProbe(merge(trial));calls++;if(r.ok){active=trial;final=r;}j--;step();},30);};
+  step();};
+function ffShow(base,active,log,final,best){
+  const use=final?active:(best?best.active:[]),ov=Object.assign({},...use.map(a=>a.patch));state.ffOv=ov;
+  runSolve(false,true,ov,6000);const op=state.result&&state.result.options[0],t=targetOf(state.o||base);
+  const rows=Object.keys(ov).map(k=>{const L=FF_LABEL[k];if(!L||L[1](base[k])===L[1](ov[k]))return"";return `<tr><td>${L[0]}</td><td>${L[1](base[k])}</td><td><b>${L[1](ov[k])}</b></td></tr>`;}).join("");
+  const why=log.filter(l=>!l.skip).map(l=>`<tr><td>${esc(l.x.name)}</td><td>${fmt(l.it,0)} MW</td><td>${l.gain>0?"+"+fmt(l.gain,0):fmt(l.gain,0)} MW</td></tr>`).join("");
+  $("ffOut").innerHTML=`<p class="${final?"ok":"bad"}"><b>${final?"Target of "+fmt(t,0)+" MW fits":"Target not reached: best is "+fmt(op?op.it:0,0)+" of "+fmt(t,0)+" MW"}</b>${final?"":" with every allowed step. Try allowing more steps, a larger building size, or infill massing."}</p>
+  ${rows?`<table><tr><th>Concession kept</th><th>Now</th><th>Proposed</th></tr>${rows}</table>`:`<p>No value changes needed; the layout search alone fits it.</p>`}
+  <details><summary class="hint">MW reached at each step of the search</summary><table><tr><th>Cumulative step</th><th>MW IT</th><th>Change</th></tr>${why}</table></details>
+  <p class="hint">The map shows the proposed layout. Accept writes these values into Design values and Site rules; Discard, or changing any input, goes back to your values.</p>
+  <div class="ff-bar"><button class="btn" id="ffAccept" type="button" ${rows?"":"disabled"}>Accept</button><button class="btn" id="ffDiscard" type="button">Discard</button></div>`;
+  $("ffAccept").onclick=()=>{Object.entries(state.ffOv).forEach(([k,v])=>{if(k==="padInSetback")$("padInSetback").checked=!!v;else if(FF_INPUT[k])$(FF_INPUT[k]).value=v;});
+    state.ffOv=null;persist();runSolve(false,true);$("ffOut").innerHTML='<p class="ok">Values applied.</p>';status("Force-fit values applied.");};
+  $("ffDiscard").onclick=()=>{state.ffOv=null;$("ffOut").innerHTML="";runSolve(false);};}
 $("btnNext").onclick=()=>{if(!state.result)return;state.opt=(state.opt+1)%state.result.options.length;state.lastDeg=state.result.options[state.opt].deg;renderLayout();renderLive(false);renderSpec();};
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
