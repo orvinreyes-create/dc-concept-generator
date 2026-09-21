@@ -70,6 +70,7 @@ th:last-child{text-align:right}
 .opmenu-list[hidden]{display:none}
 .pnode{width:17px;height:17px;border-radius:50%;background:#fff;border:3px solid #2D6A7A;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .pnode.sel{background:#2D6A7A;border-color:#fff}
+.snode{width:18px;height:18px;border-radius:3px;background:#fff;border:3px solid #7B63B8;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .limit{background:var(--warnbg);border-left:3px solid var(--warn);padding:8px 10px;margin:8px 0;font-size:14px}
 .flag{color:var(--bad);font-size:13.5px;margin:4px 0}
 .banner{font-size:12.5px;color:var(--warn);border:1px dashed var(--warn);padding:6px 8px;border-radius:4px;margin:8px 0}
@@ -146,6 +147,8 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <option value="modular">Campus modules</option>
     <option value="infill">Infill building</option>
   </select>
+  <label for="ecPos">Energy centre position</label>
+  <select id="ecPos"><option value="auto">Automatic (try both)</option><option value="side">Along the data hall (GRD)</option><option value="end">At the far end (linear)</option></select>
   <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
   <label for="bandAxis">Zone bands</label>
   <select id="bandAxis">
@@ -257,6 +260,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnRoadsReset" type="button" hidden>Auto roads</button>
     <button class="btn" id="btnPin" type="button" aria-pressed="false">Pin building</button>
     <button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button>
+    <button class="btn" id="btnSubPin" type="button" aria-pressed="false">Pin substation</button>
     <button class="btn" id="btnBase" type="button">Satellite</button>
     <button class="btn" id="btnOpt" type="button" title="Search harder: every building order, packing style and road frontage, for up to 8 seconds">Optimise</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
@@ -314,7 +318,7 @@ function area(r){return (r[2]-r[0])*(r[3]-r[1]);}
 
 /* ===== building module ===== */
 let YARD_CLEAR=15;           /* BOD: 15 m around external electrical/mechanical yards */
-function buildingSpec(m,o,B,dens){
+function buildingSpec(m,o,B,dens,form){
   const d=B.density[dens],E=B.elec[o.elec];
   const racks=Math.round(m*1000/d.kw), hall=racks*d.sqmRack;
   const gross=hall*B.circFactor+E.crit*m, foot=gross/o.storeys;
@@ -323,11 +327,22 @@ function buildingSpec(m,o,B,dens){
   const roofShare=(B.roofShare>0&&B.roofShare<=1)?B.roofShare:0.9;
   const tiers=Math.min(2,Math.max(1,Math.round(o.roofTiers||B.roofTiers||1)));
   const hrNeed=d.hr*m, roofCap=foot*roofShare*tiers, spill=Math.max(0,hrNeed-roofCap);
-  const Lm=Math.max(La+L,Math.sqrt((foot+adminFoot+ecFoot+spill)*1.15));
-  const Lh=Lm-La;
-  const Ed=Math.max(12,ecFoot/Lh), Yd=spill>0?Math.max(10,spill/Lh):0;
-  const apron=o.dockApron, H=Math.max(apron+D,Yd+D+Ed);
-  return {m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
+  const apron=o.dockApron;
+  let Lm,Lh,Ed,Yd,H,Z,adminU;
+  if(form==="end"){
+    /* linear bar: dock, admin, data hall, energy centre, then any ground
+       heat-rejection yard, all at the hall's depth. Narrower, longer. */
+    Lh=L;Ed=D;const Le=ecFoot/D,Ly=spill/D;Yd=0;
+    Lm=apron+La+Lh+Le+Ly;H=D;const a=apron,b=a+La,c=b+Lh,e=c+Le;
+    Z={apron:[0,0,a,D],admin:[a,0,b,D],hall:[b,0,c,D],ec:[c,0,e,D],yard:Ly>0?[e,0,e+Ly,D]:null};adminU=a+La/2;
+  } else {
+    Lm=Math.max(La+L,Math.sqrt((foot+adminFoot+ecFoot+spill)*1.15));
+    Lh=Lm-La;
+    Ed=Math.max(12,ecFoot/Lh);Yd=spill>0?Math.max(10,spill/Lh):0;
+    H=Math.max(apron+D,Yd+D+Ed);
+    Z={apron:[0,0,La,apron],admin:[0,apron,La,apron+D],hall:[La,Yd,Lm,Yd+D],ec:[La,Yd+D,Lm,Yd+D+Ed],yard:Yd>0?[La,0,Lm,Yd]:null};adminU=La/2;
+  }
+  return {form:form==="end"?"end":"side",Z,adminU,m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
     hrNeed,roofHR:Math.min(hrNeed,roofCap),roofCap,ecLevels,spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
     pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
 }
@@ -646,9 +661,13 @@ function solve(o,poly,B,coarse,hintDeg){
   const siteArea=Math.abs(polyArea(poly));
   const mix=(o.mix&&o.mix.length)?o.mix:null;
   const specs=[];
-  if(mix){ for(const b of mix) specs.push(buildingSpec(b.mw,o,B,b.dens)); }
+  const ecPos=o.ecPos||"auto";
+  const mkSpec=(m,d)=>{const side=buildingSpec(m,o,B,d),end=buildingSpec(m,o,B,d,"end");
+    if(ecPos==="end") return Object.assign(end,{alts:[end]});
+    return Object.assign(side,{alts:ecPos==="side"?[side]:[side,end]});};
+  if(mix){ for(const b of mix) specs.push(mkSpec(b.mw,b.dens)); }
   else { let rem=o.targetMW; const n=Math.ceil(o.targetMW/o.bldgMax);
-    for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(buildingSpec(m,o,B,o.density));rem-=m;} }
+    for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(mkSpec(m,o.density));rem-=m;} }
   const targetMW=specs.reduce((t,s)=>t+s.m,0);
   const facTarget=specs.reduce((t,s)=>t+s.m*s.pue,0);
   const subArea=(o.subSqm>0?o.subSqm:B.subSqm>0?B.subSqm:0)||(facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20);
@@ -778,7 +797,7 @@ function solve(o,poly,B,coarse,hintDeg){
           if(Math.min(a0,b0)<minSide) continue;
           if(tryPlace(a0+margin,b0+margin,kind,{area},as!==1,c,edgeMode)) return true;}
       return false;};
-    const placeSub=()=>placeFlex(subArea,"sub",YARD_CLEAR+o.road,subMargin,30,[1,1.5,2,2.5,3,4]);
+    const placeSub=()=>subPinned||placeFlex(subArea,"sub",YARD_CLEAR+o.road,subMargin,30,[1,1.5,2,2.5,3,4]);
     const placeSupport=()=>{
       if(placeFlex(supportArea,"support",o.road+6,0,16,[2,3,4,1.5,6])) return true;
       const n0=placed.length,h=supportArea/2;
@@ -789,8 +808,14 @@ function solve(o,poly,B,coarse,hintDeg){
        on the point they chose (nudged only as far as it takes to clear the
        boundary and its neighbours) and everything else fills in around it. */
     const pins=(o.pins||[]).map(p=>rot(p,-a));
+    /* clearances around a block: plant sides keep the yard clearance, the
+       rest keeps a road's width */
+    const padsOf=v=>v.form==="end"?{padX:YARD_CLEAR,padTop:o.road,padBot:o.road}:{padX:o.road,padTop:v.Yd>0?YARD_CLEAR:o.road,padBot:YARD_CLEAR};
     const placePinned=(s,meta,c)=>{
-      const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
+      for(const v of (s.alts||[s])) if(placePinnedOne(v,Object.assign({},meta,{s:v}),c)) return true;
+      return false;};
+    const placePinnedOne=(s,meta,c)=>{
+      const {padX,padTop,padBot}=padsOf(s);
       const w=s.Lm+2*padX,h=s.H+padTop+padBot;
       let best=null,bd=Infinity;
       /* the block may shift only far enough to stay over the point clicked */
@@ -805,6 +830,18 @@ function solve(o,poly,B,coarse,hintDeg){
       if(best){placed.push(best);return true;}
       return false;};
     /* pins are settled first and held aside, so the retry pass cannot clear them */
+    /* a pinned substation goes down before anything else; it keeps its area
+       and may take any of its usual proportions to sit on the point clicked */
+    let subPinned=false;
+    if(o.subPin){const c=rot(o.subPin,-a),mg=subMargin;
+      let best=null,bd=Infinity;
+      for(const as of [1,1.5,2,2.5,3,4]){const a0=Math.sqrt(subArea*as),b0=subArea/a0;if(Math.min(a0,b0)<30)continue;
+        for(const [ww,hh] of [[a0+mg,b0+mg],[b0+mg,a0+mg]]){const reach=Math.min(ww,hh)*0.45,nd=Math.max(2,step/2);
+          for(let dy=0;dy<=reach;dy+=nd) for(let dx=0;dx<=reach;dx+=nd) for(const [sx,sy] of (dx||dy?[[1,1],[-1,1],[1,-1],[-1,-1]]:[[1,1]])){
+            const d=Math.hypot(dx,dy);if(d>=bd)continue;
+            const r=[c[0]+sx*dx-ww/2,c[1]+sy*dy-hh/2,c[0]+sx*dx+ww/2,c[1]+sy*dy+hh/2];
+            if(!free(r,null,null,"sub"))continue;bd=d;best={r,kind:"sub",meta:{area:subArea,pinned:true}};}}}
+      if(best){placed.push(best);subPinned=true;}}
     const pinned=[],fixed=new Set();
     /* each pin stays in "placed" so later pins keep clear of it */
     for(let i=0;i<pins.length&&i<specs.length;i++){
@@ -814,9 +851,13 @@ function solve(o,poly,B,coarse,hintDeg){
     const placeBuildings=(mode,order,loose)=>{let mw=0;const built=[],missed=[];
       pinned.forEach(q=>{mw+=q.meta.s.m;built.push(q.meta.s);});
       for(const i of (order||specs.map((x,k)=>k))){const s=specs[i]; if(fixed.has(i)) continue;
-        const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
-        if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,loose?null:o.road+4,mode===undefined?spreadMode:mode)){mw+=s.m;built.push(s);}
-        else missed.push(s);}
+        /* try the standard block, then the linear variant with the energy
+           centre at the far end, which is narrower and may fit where the
+           standard one cannot */
+        let ok=false;
+        for(const v of (s.alts||[s])){const pd=padsOf(v);
+          if(tryPlace(v.Lm+2*pd.padX,v.H+pd.padTop+pd.padBot,"bldg",Object.assign({i,s:v},pd),true,loose?null:o.road+4,mode===undefined?spreadMode:mode)){mw+=v.m;built.push(v);ok=true;break;}}
+        if(!ok) missed.push(s);}
       return {mw,built,missed,pinsPlaced};};
     /* One pass = substation, buildings, parking, retention in a given order
        and placement style. Score every pass the same way the options are
@@ -856,7 +897,7 @@ function solve(o,poly,B,coarse,hintDeg){
           if(full(best)) break search;}}}
     placed.splice(pinFloor);best.items.forEach(q=>placed.push(q));
     const pb=best.pb,subOK=best.subOK,supOK=best.supOK,pondOK=best.pondOK;
-    return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,pinsPlaced,subOK,pondOK,supOK};};
+    return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,pinsPlaced,subPinned,subOK,pondOK,supOK};};
 
   /* A layout is scored so that a buildable plan always outranks a bigger one
      that has nowhere to put its substation; then load, parking, retention,
@@ -880,7 +921,7 @@ function solve(o,poly,B,coarse,hintDeg){
     if(o.faceGate!==false&&gate) for(const pl of out.placed){
       if(pl.kind!=="bldg") continue;
       const s=pl.meta.s,r=pl.r,sw=pl.meta.swap;
-      const adminCentre=mu=>{const cu=(mu?(sw?r[3]:r[2])-s.La/2:(sw?r[1]:r[0])+s.La/2);
+      const adminCentre=mu=>{const au=s.adminU||s.La/2,cu=(mu?(sw?r[3]:r[2])-au:(sw?r[1]:r[0])+au);
         const cv=(sw?r[0]:r[1])+((sw?r[2]-r[0]:r[3]-r[1])/2);
         return sw?[cv,cu]:[cu,cv];};
       let best=null,bd=1e9;
@@ -888,9 +929,9 @@ function solve(o,poly,B,coarse,hintDeg){
         const d=Math.hypot(c[0]-gate.node[0],c[1]-gate.node[1]);
         if(d<bd){bd=d;best=mu;}}
       pl.meta.mirror=best;}
-    return {deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,phases,pinsPlaced:out.pinsPlaced,
+    return {deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,phases,pinsPlaced:out.pinsPlaced,subPinned:out.subPinned,
       subOK:out.subOK,pondOK:out.pondOK,supOK:out.supOK,cov,specs,gate,roadArea:ra,targetMW,
-      score:rank({subOK:out.subOK,mw:out.mw,supOK:out.supOK,pondOK:out.pondOK,ra}),_ctx:{P,bb,base}};};
+      score:rank({subOK:out.subOK,mw:out.mw,supOK:out.supOK,pondOK:out.pondOK,ra})+(out.subPinned?5e8:0)+(out.pinsPlaced||0)*5e8,_ctx:{P,bb,base}};};
   for(const deg of angs) for(const type of types){
     const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
     const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
@@ -908,7 +949,7 @@ function solve(o,poly,B,coarse,hintDeg){
     let pick=sets[0],pickS=-Infinity;
     for(const roads of sets){
       const q=runPlacement(P,bb,roads,false,a,false);
-      const sc=rank({subOK:q.subOK,mw:q.mw,supOK:q.supOK,pondOK:q.pondOK,ra:0});
+      const sc=rank({subOK:q.subOK,mw:q.mw,supOK:q.supOK,pondOK:q.pondOK,ra:0})+(q.subPinned?5e8:0)+(q.pinsPlaced||0)*5e8;
       if(sc>pickS){pickS=sc;pick=roads;}
       if(q.mw>=targetMW&&q.subOK&&q.supOK&&q.pondOK) break;}
     res.push(finish(deg,a,type,P,bb,pick,runPlacement(P,bb,pick,!coarse,a,false)));
@@ -963,6 +1004,8 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(o.profile==="metro"&&siteArea>=50000) flags.push("Site is 5 ha or more, which fits the campus profile.");
   if(o.profile==="campus"&&siteArea<50000) flags.push("Site is under 5 ha, which fits the metro profile.");
   if(!r.gate) flags.push("No road reaches the boundary, so the site has no gate position.");
+  if(o.subPin&&!infill&&!r.subPinned) flags.push("The substation does not fit where it is pinned, so the solver placed it freely. Move the pin.");
+  if(!infill&&L.some(s=>s.form==="end")) flags.push(L.filter(s=>s.form==="end").length+" building"+(L.filter(s=>s.form==="end").length>1?"s use":" uses")+" the linear arrangement, with the energy centre at the far end of the data hall instead of along its side. It fits a narrower plot but lengthens cable runs from the energy centre; confirm with the electrical engineer.");
   if(o.pins&&o.pins.length&&(r.pinsPlaced||0)<Math.min(o.pins.length,r.specs.length))
     flags.push((Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0))+" pinned building"+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"s do":" does")+" not fit where pinned, so the solver placed "+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"them":"it")+" freely. Move the pin or reduce the building size.");
   let limit;
@@ -974,7 +1017,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
     if(L.some(s=>s.spill>0)) limit+=" Ground-level heat rejection is taking site area.";}
   const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access",custom:"Your own roads"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
-    rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,
+    rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,subPinned:!!r.subPinned,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
     rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Circulation",cname+", "+r.deg+"°","circRow"],
       ["Data buildings",L.length+" of "+r.specs.length,"buildings"],
@@ -1064,6 +1107,7 @@ adminGfa:"Floor area of the administration and support block, which holds office
 footprint:"Ground area covered by structures: data halls, admin blocks and the energy centre gantries. Loading aprons, roads, yards and the substation are open ground and are not counted. This is what the coverage limit applies to.",
 coverageRow:"Building footprint as a share of the site. Compare it with the zoning limit you entered.",
 storeysRow:"Number of floors and the resulting building height, including rooftop plant. Compare it with the height limit.",
+ecPos:"Where each campus building\u2019s energy centre sits. Along the data hall is the GRD arrangement. At the far end makes a longer, narrower linear building (dock, admin, halls, energy centre in a row) that can fit tighter plots, at the cost of longer cable runs. Automatic tries the GRD arrangement first and the linear one where it does not fit.",
 ecFoot:"Ground area of the energy centre gantry, which houses transformers, switchgear, UPS and generators. The GRD gantry stacks plant on every floor of the building, so its footprint is the total area divided by the number of levels. It grows under EMOD and shrinks under EROOM.",
 roofHR:"Chillers on a raised deck over the data hall roof, as the GRD baseline does. The first figure is what this load needs; the second is what the roof can take, set by the profile\u2019s usable roof share. Anything beyond it goes to a ground yard.",
 fenceRow:"Length of the perimeter security fence, less the gate opening, measured at the fence line. The clear zone is a band inside the fence kept free of buildings, yards and parking so the fence can be watched and patrolled. Roads may cross it at the gate.",
@@ -1241,7 +1285,7 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
   status("Template downloaded. Replace the values, keep the parameter names, then import it.");};
 
 /* ===== State and form ===== */
-const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1,pins:[],pinning:false,psel:-1};
+const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1,pins:[],pinning:false,psel:-1,subPinLL:null,subPinning:false};
 const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","fenceInset","clearZone","roofTiers","yardClear"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
@@ -1309,6 +1353,7 @@ $("circulation").onchange=()=>schedule(false);
 $("massing").onchange=()=>schedule(false);
 $("bandAxis").onchange=()=>schedule(false);
 $("faceGate").onchange=()=>schedule(false);
+$("ecPos").onchange=()=>{schedule(false);persist();};
 $("padInSetback").onchange=()=>{schedule(false);persist();};
 $("fenceOn").onchange=()=>{schedule(false);persist();};
 
@@ -1407,6 +1452,24 @@ $("btnPinReset").onclick=()=>{state.pins=[];state.psel=-1;state.pinning=false;
   $("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";$("btnPinReset").hidden=true;
   map.getCanvas().style.cursor="";clearPinHandles();status("Pins cleared.");schedule(false);persist();};
 
+
+/* ----- pinned substation ----- */
+let subMark=null;
+function drawSubPin(){ if(subMark){subMark.remove();subMark=null;}
+  $("btnSubPin").textContent=state.subPinning?"Click the site\u2026":(state.subPinLL?"Unpin substation":"Pin substation");
+  $("btnSubPin").setAttribute("aria-pressed",String(!!state.subPinning));
+  if(!state.subPinLL) return;
+  const el=document.createElement("div");el.className="snode";el.title="Pinned substation. Drag to move it.";
+  subMark=new maplibregl.Marker({element:el,draggable:true}).setLngLat(state.subPinLL).addTo(map);
+  subMark.on("dragstart",()=>{state.dragging=true;});
+  subMark.on("drag",()=>{const ll=subMark.getLngLat();state.subPinLL=[ll.lng,ll.lat];schedule(true);});
+  subMark.on("dragend",()=>{state.dragging=false;schedule(false);persist();});}
+$("btnSubPin").onclick=()=>{
+  if(state.subPinLL&&!state.subPinning){state.subPinLL=null;drawSubPin();schedule(false);persist();status("Substation unpinned.");return;}
+  state.subPinning=!state.subPinning;map.getCanvas().style.cursor=state.subPinning?"crosshair":"";
+  if(state.subPinning){state.pinning=false;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";}
+  status(state.subPinning?"Click the site where the substation should go.":"");drawSubPin();};
+
 /* ----- building mix ----- */
 const DSHORT={ent:"Enterprise",ai60:"AI 60 kW",ai130:"AI 130 kW",ai200:"AI 200 kW"};
 function drawMix(){
@@ -1434,7 +1497,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
-    massing:$("massing").value,faceGate:$("faceGate").checked,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
+    massing:$("massing").value,faceGate:$("faceGate").checked,ecPos:$("ecPos").value,subPinLL:state.subPinLL,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
     mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear")};}
 
 /* ===== Map ===== */
@@ -1532,6 +1595,8 @@ function stopDraw(commit){state.drawing=false;draftMarkers.forEach(m=>m.remove()
   else if(commit){status("A site needs at least three corners.");}
   buildHandles();schedule(false);persist();}
 map.on("click",e=>{
+  if(state.subPinning){state.subPinLL=[e.lngLat.lng,e.lngLat.lat];state.subPinning=false;map.getCanvas().style.cursor="";
+    drawSubPin();schedule(false);persist();status("Substation pinned. Drag the square to move it.");return;}
   if(state.pinning){state.pins.push([e.lngLat.lng,e.lngLat.lat]);state.psel=state.pins.length-1;
     $("btnPinReset").hidden=false;drawPinHandles();schedule(false);persist();
     status(state.pins.length+" building"+(state.pins.length>1?"s":"")+" pinned. Click again for the next, or press Done pinning.");return;}
@@ -1617,6 +1682,7 @@ function runSolve(coarse,optimise){
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=effectiveBOD(o);
   o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
   o.pins=(o.pinsLL||[]).map(F.toM);
+  o.subPin=o.subPinLL?F.toM(o.subPinLL):null;
   o.customRoads=(o.roadsLL&&o.roadsLL.edges.length)
     ? o.roadsLL.edges.map(e=>({a:F.toM(o.roadsLL.nodes[e[0]]),b:F.toM(o.roadsLL.nodes[e[1]]),w:o.roadsLL.w||o.road}))
     : null;
@@ -1691,8 +1757,8 @@ function buildDetail(op,o,B){
       const U=u=>m.mirror?sp.Lm-u:u;
       const box=(u0,v0,u1,v1)=>{const a0=Math.min(U(u0),U(u1)),a1=Math.max(U(u0),U(u1));
         return m.swap?[ix+v0,iy+a0,ix+v1,iy+a1]:[ix+a0,iy+v0,ix+a1,iy+v1];};
-      rows(box(sp.La,sp.Yd,sp.Lm,sp.Yd+sp.D));
-      bays(box(sp.La,sp.Yd+sp.D,sp.Lm,sp.Yd+sp.D+sp.Ed),Math.ceil(sp.m/B.moduleMW)*B.gensPerModule,modular);
+      rows(box(...sp.Z.hall));
+      bays(box(...sp.Z.ec),Math.ceil(sp.m/B.moduleMW)*B.gensPerModule,modular);
     }
   }
   return {type:"FeatureCollection",features:feats};}
@@ -1764,16 +1830,17 @@ function renderLayout(){
     const U=u=>m.mirror?s.Lm-u:u;   /* mirror puts the entrance side toward the gate */
     const part=(u0,v0,u1,v1,kind,label,ar)=>{const a0=Math.min(U(u0),U(u1)),a1=Math.max(U(u0),U(u1));
       box(m.swap?[ix+v0,iy+a0,ix+v1,iy+a1]:[ix+a0,iy+v0,ix+a1,iy+v1],kind,label,ar);};
-    if(s.Yd>0) part(s.La,0,s.Lm,s.Yd,"yard",tag("Heat rejection",s.spill),s.spill);
-    part(s.La,s.Yd,s.Lm,s.Yd+s.D,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D)
+    const Z=s.Z,zp=(z,kind,label,ar)=>{if(z)part(z[0],z[1],z[2],z[3],kind,label,ar);};
+    zp(Z.yard,"yard",tag("Heat rejection",s.spill),s.spill);
+    zp(Z.hall,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D)
       +'<br><span style="font-weight:400;opacity:.75">roof chillers '+sq(s.roofHR)+'</span>',s.L*s.D);
     /* roof chiller deck: the share of the hall roof the chillers take, drawn
        from the far end of the hall, inset so it reads as a raised platform */
-    if(s.roofHR>0){const f=Math.min(1,s.roofHR/Math.max(1,s.L*s.D)),ins=Math.min(2.5,s.D*0.06);
-      part(s.Lm-(s.Lm-s.La)*f+ins,s.Yd+ins,s.Lm-ins,s.Yd+s.D-ins,"roofhr",null);}
-    part(s.La,s.Yd+s.D,s.Lm,s.Yd+s.D+s.Ed,"ec",tag("Energy centre",s.ecFoot),s.ecFoot);
-    part(0,0,s.La,s.apron,"apron",tag("Loading dock",s.La*s.apron),s.La*s.apron);
-    part(0,s.apron,s.La,s.apron+s.D,"admin",tag("Admin",s.adminFoot),s.adminFoot);
+    if(s.roofHR>0){const h=Z.hall,f=Math.min(1,s.roofHR/Math.max(1,(h[2]-h[0])*(h[3]-h[1]))),ins=Math.min(2.5,s.D*0.06);
+      part(h[2]-(h[2]-h[0])*f+ins,h[1]+ins,h[2]-ins,h[3]-ins,"roofhr",null);}
+    zp(Z.ec,"ec",tag("Energy centre",s.ecFoot),s.ecFoot);
+    zp(Z.apron,"apron",tag("Loading dock",(Z.apron[2]-Z.apron[0])*(Z.apron[3]-Z.apron[1])),(Z.apron[2]-Z.apron[0])*(Z.apron[3]-Z.apron[1]));
+    zp(Z.admin,"admin",tag("Admin",s.adminFoot),s.adminFoot);
   }
   const src=map.getSource("layout");
   if(src) src.setData({type:"FeatureCollection",features:feats});
@@ -1781,7 +1848,7 @@ function renderLayout(){
   if(dsrc) dsrc.setData(buildDetail(op,o,activeBOD()));
   state.layoutGeo=feats;state.pendingLayout=!src;
   /* never rebuild handles mid-drag: that would drop the marker being dragged */
-  if(!state.dragging){ if(state.editRoads) drawRoadHandles(); if(state.pins.length) drawPinHandles(); }
+  if(!state.dragging){ if(state.editRoads) drawRoadHandles(); if(state.pins.length) drawPinHandles(); drawSubPin(); }
   /* boundary dimensions */
   if(state.ring.length>2){const Fm=state.F;
     const pts=state.ring.map(Fm.toM);
@@ -2011,15 +2078,15 @@ $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
-  return {app:"dccg",v:8,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:9,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
   $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";state.frontLL=p.frontLL||null;state.roadsLL=p.roadsLL||null;state.pins=Array.isArray(p.pinsLL)?p.pinsLL.slice():[];state.psel=-1;state.pinning=false;
   state.editRoads=false;state.rsel=-1;$("btnRoads").textContent="Edit roads";$("btnRoads").setAttribute("aria-pressed","false");
   $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
-  $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();
-  $("faceGate").checked=p.faceGate!==false;$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
+  $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();state.subPinning=false;drawSubPin();
+  $("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
 function drawProjects(){const l=lsGet(LS_PROJ,[]);
