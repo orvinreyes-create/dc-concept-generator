@@ -63,6 +63,10 @@ summary{cursor:pointer;font:600 16px "Barlow Condensed",sans-serif;padding:4px 0
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 td{padding:4px 0;border-bottom:1px solid var(--line);vertical-align:top}
 td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8px}
+th{padding:4px 0;border-bottom:1px solid var(--line);text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;opacity:.65}
+th:last-child{text-align:right}
+.pnode{width:17px;height:17px;border-radius:50%;background:#fff;border:3px solid #2D6A7A;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.pnode.sel{background:#2D6A7A;border-color:#fff}
 .limit{background:var(--warnbg);border-left:3px solid var(--warn);padding:8px 10px;margin:8px 0;font-size:14px}
 .flag{color:var(--bad);font-size:13.5px;margin:4px 0}
 .banner{font-size:12.5px;color:var(--warn);border:1px dashed var(--warn);padding:6px 8px;border-radius:4px;margin:8px 0}
@@ -234,6 +238,8 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnRemove" type="button" disabled>Remove corner</button>
     <button class="btn" id="btnRoads" type="button" aria-pressed="false">Edit roads</button>
     <button class="btn" id="btnRoadsReset" type="button" hidden>Auto roads</button>
+    <button class="btn" id="btnPin" type="button" aria-pressed="false">Pin building</button>
+    <button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button>
     <button class="btn" id="btnBase" type="button">Satellite</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
     <button class="btn" id="btnPNG" type="button">PNG</button>
@@ -625,7 +631,7 @@ function solve(o,poly,B,coarse,hintDeg){
   const res=[];
 
   /* one placement pass against a given road set */
-  const runPlacement=(P,bb,roads,fine)=>{
+  const runPlacement=(P,bb,roads,fine,a)=>{
     const placed=[],step=Math.max(4,Math.sqrt(siteArea)/85)*(fine?1:2.6);
     const free=(r,clear)=>{
       if(!rectFits(r,P,o.setback)) return false;
@@ -657,24 +663,50 @@ function solve(o,poly,B,coarse,hintDeg){
       if(best){placed.push(best);return true;}
       return false;};
     const spreadMode=fine?"spread":false, edgeMode=fine?"edge":false;
+    /* A pinned building is the user's decision, not the solver's: it is dropped
+       on the point they chose (nudged only as far as it takes to clear the
+       boundary and its neighbours) and everything else fills in around it. */
+    const pins=(o.pins||[]).map(p=>rot(p,-a));
+    const placePinned=(s,meta,c)=>{
+      const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
+      const w=s.Lm+2*padX,h=s.H+padTop+padBot;
+      let best=null,bd=Infinity;
+      /* the block may shift only far enough to stay over the point clicked */
+      const nudge=Math.max(2,step/2),reach=Math.min(w,h)*0.45;
+      for(const [ww,hh,sw] of [[w,h,false],[h,w,true]])
+        for(let dy=0;dy<=reach;dy+=nudge) for(let dx=0;dx<=reach;dx+=nudge)
+          for(const [sx,sy] of (dx||dy?[[1,1],[-1,1],[1,-1],[-1,-1]]:[[1,1]])){
+            const d=Math.hypot(dx,dy); if(d>=bd) continue;
+            const r=[c[0]+sx*dx-ww/2,c[1]+sy*dy-hh/2,c[0]+sx*dx+ww/2,c[1]+sy*dy+hh/2];
+            if(!free(r,null)) continue;
+            bd=d;best={r,kind:"bldg",meta:Object.assign({swap:sw,pinned:true,padX,padTop,padBot},meta)};}
+      if(best){placed.push(best);return true;}
+      return false;};
+    /* pins are settled first and held aside, so the retry pass cannot clear them */
+    const pinned=[],fixed=new Set();
+    for(let i=0;i<pins.length&&i<specs.length;i++){
+      if(placePinned(specs[i],{i,s:specs[i]},pins[i])){pinned.push(placed.pop());fixed.add(i);}}
+    pinned.forEach(q=>placed.push(q));
+    const pinFloor=placed.length, pinsPlaced=pinned.length;
     const placeBuildings=()=>{let mw=0;const built=[],missed=[];
-      for(let i=0;i<specs.length;i++){const s=specs[i];
+      pinned.forEach(q=>{mw+=q.meta.s.m;built.push(q.meta.s);});
+      for(let i=0;i<specs.length;i++){const s=specs[i]; if(fixed.has(i)) continue;
         const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
         if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,o.road+4,spreadMode)){mw+=s.m;built.push(s);}
         else missed.push(s);}
-      return {mw,built,missed};};
+      return {mw,built,missed,pinsPlaced};};
     const subS=Math.sqrt(subArea);
     let subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
     let pb=placeBuildings();
     if(fine&&pb.missed.length){
-      const keep=placed.splice(0);
+      const keep=placed.splice(pinFloor);
       const pb2=placeBuildings();
       const sub2=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
       if(pb2.mw>pb.mw&&sub2){pb=pb2;subOK=sub2;}
-      else {placed.splice(0);keep.forEach(q=>placed.push(q));}}
+      else {placed.splice(pinFloor);keep.forEach(q=>placed.push(q));}}
     const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,edgeMode);
     const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,edgeMode);
-    return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,subOK,pondOK,supOK};};
+    return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,pinsPlaced,subOK,pondOK,supOK};};
 
   for(const deg of angs) for(const type of types){
     const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
@@ -687,14 +719,22 @@ function solve(o,poly,B,coarse,hintDeg){
     /* score each layout quickly, then settle the winner properly */
     let pick=sets[0],pickMW=-1;
     for(const roads of sets){
-      const q=runPlacement(P,bb,roads,false);
+      const q=runPlacement(P,bb,roads,false,a);
       if(q.mw>pickMW){pickMW=q.mw;pick=roads;}
       if(pickMW>=targetMW) break;}
     let roads=pick;
-    const out=runPlacement(P,bb,roads,!coarse);
+    const out=runPlacement(P,bb,roads,!coarse,a);
     roads=roads.concat(accessDrives(out.placed,roads,o,P));
     const cov=out.built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
     const ra=roadArea(roads),gate=gateFor(P,roads,o.frontPoint?rot(o.frontPoint,-a):null);
+    /* Phase order: buildings are numbered outward from the gate, so B1 is the
+       first phase off the entry and the numbering matches a staged build-out. */
+    const bl=out.placed.filter(p=>p.kind==="bldg");
+    const org=gate?gate.node:[(bb[0]+bb[2])/2,bb[1]];
+    bl.forEach(p=>{p.meta.gd=Math.hypot((p.r[0]+p.r[2])/2-org[0],(p.r[1]+p.r[3])/2-org[1]);});
+    bl.sort((x,y)=>x.meta.gd-y.meta.gd);
+    bl.forEach((p,k)=>{p.meta.i=k;});
+    const phases=bl.map(p=>({s:p.meta.s,pinned:!!p.meta.pinned}));
     if(o.faceGate!==false&&gate) for(const pl of out.placed){
       if(pl.kind!=="bldg") continue;
       const s=pl.meta.s,r=pl.r,sw=pl.meta.swap;
@@ -706,7 +746,7 @@ function solve(o,poly,B,coarse,hintDeg){
         const d=Math.hypot(c[0]-gate.node[0],c[1]-gate.node[1]);
         if(d<bd){bd=d;best=mu;}}
       pl.meta.mirror=best;}
-    res.push({deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,
+    res.push({deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,phases,pinsPlaced:out.pinsPlaced,
       subOK:out.subOK,pondOK:out.pondOK,supOK:out.supOK,cov,specs,gate,roadArea:ra,targetMW,
       score:out.mw*1e6+(out.subOK?4e5:0)+(out.pondOK?2e5:0)+(out.supOK?1e5:0)-ra*0.4});
   }
@@ -748,6 +788,8 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(o.profile==="metro"&&siteArea>=50000) flags.push("Site is 5 ha or more, which fits the campus profile.");
   if(o.profile==="campus"&&siteArea<50000) flags.push("Site is under 5 ha, which fits the metro profile.");
   if(!r.gate) flags.push("No road reaches the boundary, so the site has no gate position.");
+  if(o.pins&&o.pins.length&&(r.pinsPlaced||0)<Math.min(o.pins.length,r.specs.length))
+    flags.push((Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0))+" pinned building"+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"s do":" does")+" not fit where pinned, so the solver placed "+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"them":"it")+" freely. Move the pin or reduce the building size.");
   let limit;
   if(infill) limit="Target of "+r.targetMW+" MW IT fits as an infill building of "+L[0].storeys+" floors on "+fmt(L[0].foot,0)+" sqm.";
   else if(it>=r.targetMW) limit="Target of "+r.targetMW+" MW IT fits.";
@@ -757,7 +799,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
     if(L.some(s=>s.spill>0)) limit+=" Ground-level heat rejection is taking site area.";}
   const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access",custom:"Your own roads"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
-    rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,
+    rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
     rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Circulation",cname+", "+r.deg+"°","circRow"],
       ["Data buildings",L.length+" of "+r.specs.length,"buildings"],
@@ -997,7 +1039,7 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
   status("Template downloaded. Replace the values, keep the parameter names, then import it.");};
 
 /* ===== State and form ===== */
-const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1};
+const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1,pins:[],pinning:false,psel:-1};
 const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
@@ -1118,6 +1160,42 @@ $("btnRoadsReset").onclick=()=>{state.roadsLL=null;state.editRoads=false;state.r
   $("btnRoads").setAttribute("aria-pressed","false");$("btnRoads").textContent="Edit roads";$("btnRoadsReset").hidden=true;
   clearRoadHandles();status("Roads back to automatic.");schedule(false);persist();};
 
+/* ----- pinned buildings -----
+   A pin fixes one building's centre. The solver drops that building there and
+   fills the rest of the site around it, which is how a neighbour's easement, a
+   drainage line or a client's preferred phase-one corner gets into the plan. */
+let pMarks=[];
+function clearPinHandles(){pMarks.forEach(m=>m.remove());pMarks=[];}
+function drawPinHandles(){
+  clearPinHandles();
+  state.pins.forEach((p,i)=>{
+    const el=document.createElement("div");el.className="pnode"+(i===state.psel?" sel":"");
+    el.title="Pinned building B"+(i+1)+" of the mix. Drag to move it. Click to select, then Delete to unpin.";
+    const mk=new maplibregl.Marker({element:el,draggable:true}).setLngLat(p).addTo(map);
+    let moved=false;
+    mk.on("dragstart",()=>{moved=true;});
+    mk.on("drag",()=>{const ll=mk.getLngLat();state.pins[i]=[ll.lng,ll.lat];schedule(true);});
+    mk.on("dragend",()=>{schedule(false);persist();setTimeout(()=>moved=false,0);});
+    el.addEventListener("click",ev=>{ev.stopPropagation();if(moved)return;
+      state.psel=(state.psel===i?-1:i);drawPinHandles();});
+    pMarks.push(mk);});}
+function deletePin(){
+  if(state.psel<0)return;
+  state.pins.splice(state.psel,1);state.psel=-1;
+  $("btnPinReset").hidden=!state.pins.length;
+  drawPinHandles();schedule(false);persist();
+  status(state.pins.length?state.pins.length+" building"+(state.pins.length>1?"s":"")+" pinned.":"No buildings pinned; the solver places them all.");}
+$("btnPin").onclick=()=>{
+  state.pinning=!state.pinning;
+  $("btnPin").setAttribute("aria-pressed",String(state.pinning));
+  $("btnPin").textContent=state.pinning?"Done pinning":"Pin building";
+  map.getCanvas().style.cursor=state.pinning?"crosshair":"";
+  status(state.pinning?"Click the site to pin a building centre. Pins take the mix in order, so the first pin is the first building.":"");
+  drawPinHandles();};
+$("btnPinReset").onclick=()=>{state.pins=[];state.psel=-1;state.pinning=false;
+  $("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";$("btnPinReset").hidden=true;
+  map.getCanvas().style.cursor="";clearPinHandles();status("Pins cleared.");schedule(false);persist();};
+
 /* ----- building mix ----- */
 const DSHORT={ent:"Enterprise",ai60:"AI 60 kW",ai130:"AI 130 kW",ai200:"AI 200 kW"};
 function drawMix(){
@@ -1145,7 +1223,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
-    massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,
+    massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
     mix:state.mix.length?state.mix.slice():null,supportSqm:B.profile[state.profile].supportSqm||2000};}
 
 /* ===== Map ===== */
@@ -1222,6 +1300,7 @@ function updateSiteSource(){const src=map.getSource("site");if(!src)return;
 $("btnRemove").onclick=removeSelected;
 document.addEventListener("keydown",e=>{
   if((e.key==="Delete"||e.key==="Backspace")&&state.editRoads&&state.rsel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();deleteRoadNode();return;}
+  if((e.key==="Delete"||e.key==="Backspace")&&state.psel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();deletePin();return;}
   if((e.key==="Delete"||e.key==="Backspace")&&state.sel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();removeSelected();}
   if(e.key==="Escape"&&state.drawing) stopDraw(false);});
 function removeSelected(){if(state.sel<0||state.ring.length<=3)return;state.ring.splice(state.sel,1);state.sel=-1;$("btnRemove").disabled=true;buildHandles();schedule(false);persist();}
@@ -1237,7 +1316,11 @@ function stopDraw(commit){state.drawing=false;draftMarkers.forEach(m=>m.remove()
   if(commit&&state.draft.length>=3){state.ring=state.draft;state.sel=-1;}
   else if(commit){status("A site needs at least three corners.");}
   buildHandles();schedule(false);persist();}
-map.on("click",e=>{if(!state.drawing)return;state.draft.push([e.lngLat.lng,e.lngLat.lat]);
+map.on("click",e=>{
+  if(state.pinning){state.pins.push([e.lngLat.lng,e.lngLat.lat]);state.psel=state.pins.length-1;
+    $("btnPinReset").hidden=false;drawPinHandles();schedule(false);persist();
+    status(state.pins.length+" building"+(state.pins.length>1?"s":"")+" pinned. Click again for the next, or press Done pinning.");return;}
+  if(!state.drawing)return;state.draft.push([e.lngLat.lng,e.lngLat.lat]);
   const el=document.createElement("div");el.className="vtx";draftMarkers.push(new maplibregl.Marker({element:el}).setLngLat(e.lngLat).addTo(map));updateSiteSource();});
 
 /* basemap, search */
@@ -1307,6 +1390,7 @@ function runSolve(coarse){
   const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=activeBOD();
   o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
+  o.pins=(o.pinsLL||[]).map(F.toM);
   o.customRoads=(o.roadsLL&&o.roadsLL.edges.length)
     ? o.roadsLL.edges.map(e=>({a:F.toM(o.roadsLL.nodes[e[0]]),b:F.toM(o.roadsLL.nodes[e[1]]),w:o.roadsLL.w||o.road}))
     : null;
@@ -1435,6 +1519,7 @@ function renderLayout(){
   if(dsrc) dsrc.setData(buildDetail(op,o,activeBOD()));
   state.layoutGeo=feats;state.pendingLayout=!src;
   if(state.editRoads) drawRoadHandles();
+  if(state.pins.length) drawPinHandles();
   /* boundary dimensions */
   if(state.ring.length>2){const Fm=state.F;
     const pts=state.ring.map(Fm.toM);
@@ -1470,7 +1555,10 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   ${o.density!=="ent"?'<div class="banner">AI-ready values are indicative industry assumptions.</div>':''}
   ${state.closure>1?`<p class="flag">Title courses do not close by ${fmt(state.closure,2)} m.</p>`:""}
   <div class="limit">${esc(op.limit)}</div>${op.flags.map(f=>`<p class="flag">${esc(f)}</p>`).join("")}
-  ${op.built.length?`<h2>Buildings</h2><table>${op.built.map((s,i)=>`<tr><td>B${i+1} ${DSHORT[s.dens]}</td><td>${fmt(s.m,0)} MW &middot; ${fmt(s.racks,0)} racks &middot; ${fmt(s.hall,0)} sqm hall</td></tr>`).join("")}</table><h2>Totals</h2>`:""}
+  ${op.built.length?(()=>{const ph=(op.phases&&op.phases.length)?op.phases:op.built.map(s=>({s,pinned:false}));let cum=0;
+    return `<h2>Buildings, in phase order</h2><p class="hint">B1 is nearest the gate, so the numbering follows a staged build-out outward along the drives.</p>
+    <table><tr><th>Phase</th><th>Capacity</th><th>Cumulative</th></tr>${ph.map((p,i)=>{cum+=p.s.m;
+      return `<tr><td>B${i+1} ${DSHORT[p.s.dens]}${p.pinned?' <span title="Pinned by you">\u{1F4CD}</span>':""}</td><td>${fmt(p.s.m,0)} MW &middot; ${fmt(p.s.racks,0)} racks &middot; ${fmt(p.s.hall,0)} sqm hall</td><td>${fmt(cum,0)} MW</td></tr>`;}).join("")}</table><h2>Totals</h2>`;})():""}
   <table>${op.rows.map(r=>`<tr><td>${r[0]}${r[2]&&TIP[r[2]]?`<button type="button" class="info" data-tip="${r[2]}" aria-label="What does ${esc(r[0])} mean?">i</button>`:""}</td><td>${r[1]}</td></tr>`).join("")}</table>
   <p class="hint">${esc(op.grid)}</p>
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
@@ -1501,13 +1589,14 @@ $("btnPNG").onclick=()=>{if(!state.result)return;
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
-  return {app:"dccg",v:6,roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:7,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
-  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";state.frontLL=p.frontLL||null;state.roadsLL=p.roadsLL||null;
+  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";state.frontLL=p.frontLL||null;state.roadsLL=p.roadsLL||null;state.pins=Array.isArray(p.pinsLL)?p.pinsLL.slice():[];state.psel=-1;state.pinning=false;
   state.editRoads=false;state.rsel=-1;$("btnRoads").textContent="Edit roads";$("btnRoads").setAttribute("aria-pressed","false");
   $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
+  $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();
   $("faceGate").checked=p.faceGate!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
