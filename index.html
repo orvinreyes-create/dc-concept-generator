@@ -265,7 +265,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 /* ===== Placeholder basis of design (generic, not from any company document) ===== */
 const PLACEHOLDER = {
   name:"Placeholder values", placeholder:true, version:1,
-  moduleMW:8, rowPitch:6.0, circFactor:1.22, floorM:6.0, roofPlantM:6, rackKgLimit:2000, dockApron:30, ecLevels:0, roofShare:0.9, yardClear:15,
+  moduleMW:8, rowPitch:6.0, circFactor:1.22, floorM:6.0, roofPlantM:6, rackKgLimit:2000, dockApron:30, ecLevels:0, roofShare:0.9, yardClear:15, subSqm:0, subMargin:8,
   gensPerModule:5, genKVA:3000, fuelHours:24, fuelLPerGen:15000,
   elec:{ EROOM:{crit:150, ecPerMW:200, admin:3000}, EMOD:{crit:70, ecPerMW:400, admin:3000} },
   density:{
@@ -632,7 +632,7 @@ function solve(o,poly,B,coarse,hintDeg){
     for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(buildingSpec(m,o,B,o.density));rem-=m;} }
   const targetMW=specs.reduce((t,s)=>t+s.m,0);
   const facTarget=specs.reduce((t,s)=>t+s.m*s.pue,0);
-  const subArea=facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20;
+  const subArea=B.subSqm>0?B.subSqm:facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20;
   const pondArea=siteArea*o.pond/100, supportArea=o.supportSqm;
   const pitch=Math.max(...specs.map(s=>Math.max(s.Lm,s.H)))+2*YARD_CLEAR+o.road;
   const env=Math.max(...specs.map(s=>Math.min(s.Lm+2*o.road,s.H+(s.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)));
@@ -745,7 +745,7 @@ function solve(o,poly,B,coarse,hintDeg){
           if(Math.min(a0,b0)<minSide) continue;
           if(tryPlace(a0+margin,b0+margin,kind,{area},as!==1,c,edgeMode)) return true;}
       return false;};
-    const placeSub=()=>placeFlex(subArea,"sub",YARD_CLEAR+o.road,8,35,[1,1.5,2,2.5]);
+    const placeSub=()=>placeFlex(subArea,"sub",YARD_CLEAR+o.road,B.subMargin>=0?B.subMargin:8,30,[1,1.5,2,2.5,3,4]);
     const placeSupport=()=>{
       if(placeFlex(supportArea,"support",o.road+6,0,16,[2,3,4,1.5,6])) return true;
       const n0=placed.length,h=supportArea/2;
@@ -905,7 +905,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const liquidMW=sum(s=>s.m*s.liquid/100),cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
   const maxHt=L.length?Math.max(...L.map(s=>s.height)):0,flags=[];
   const heavy=L.filter(s=>s.rackKg>B.rackKgLimit);
-  if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to 2.5:1, no side under 35 m, plus an 8 m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
+  if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to 4:1, no side under 30 m, plus a "+(B.subMargin>=0?B.subMargin:8)+" m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
   if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
   if(!r.supOK) flags.push("Parking and support yards ("+fmt(supportArea,0)+" sqm, tried as one yard or two, no side under 16 m) do not fit. Try Optimise, or allow for parking inside the buildings.");
   if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
@@ -1067,6 +1067,8 @@ const CSV_ROWS=[
  ["dockApron","Depth of the loading dock apron for truck manoeuvring, m"],
  ["ecLevels","Levels in the energy centre gantry. 0 = same as the building storeys (the GRD gantry has plant on every floor); 1 = all at grade"],
  ["yardClear","Clear distance kept around external electrical and mechanical yards, m"],
+ ["subSqm","Substation plot area, sqm. 0 = sized from the facility load (air-insulated); set lower for a compact gas-insulated (GIS) substation"],
+ ["subMargin","Fence and clearance margin added around the substation plot, m"],
  ["roofShare","Share of the data hall roof usable for the chiller deck, 0 to 1 (0.9 = 90%)"],
  ["rowPitch","Rack row pitch: one cold aisle, two rack rows and one hot aisle, m"],
  ["elec.EROOM.crit","EROOM: critical support area inside the building, sqm per MW"],
