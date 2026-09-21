@@ -212,7 +212,11 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     </div>
     <div class="row">
       <div><label for="dockApron">Loading dock apron (m)</label><input id="dockApron" type="number"></div>
-      <div></div>
+      <div><label for="supportSqm">Parking and yards (sqm)</label><input id="supportSqm" type="number" min="0" step="100"></div>
+    </div>
+    <div class="row">
+      <div><label for="subSqm">Substation (sqm, 0 = auto)</label><input id="subSqm" type="number" min="0" step="100"></div>
+      <div><label for="subMargin">Substation margin (m)</label><input id="subMargin" type="number" min="0" step="1"></div>
     </div>
     <p class="hint">These override the profile for this site only. Use Export profile to keep them.</p>
   </details>
@@ -632,7 +636,8 @@ function solve(o,poly,B,coarse,hintDeg){
     for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(buildingSpec(m,o,B,o.density));rem-=m;} }
   const targetMW=specs.reduce((t,s)=>t+s.m,0);
   const facTarget=specs.reduce((t,s)=>t+s.m*s.pue,0);
-  const subArea=B.subSqm>0?B.subSqm:facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20;
+  const subArea=(o.subSqm>0?o.subSqm:B.subSqm>0?B.subSqm:0)||(facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20);
+  const subMargin=o.subMargin>=0&&o.subMargin!==undefined&&!isNaN(o.subMargin)?o.subMargin:(B.subMargin>=0?B.subMargin:8);
   const pondArea=siteArea*o.pond/100, supportArea=o.supportSqm;
   const pitch=Math.max(...specs.map(s=>Math.max(s.Lm,s.H)))+2*YARD_CLEAR+o.road;
   const env=Math.max(...specs.map(s=>Math.min(s.Lm+2*o.road,s.H+(s.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)));
@@ -745,7 +750,7 @@ function solve(o,poly,B,coarse,hintDeg){
           if(Math.min(a0,b0)<minSide) continue;
           if(tryPlace(a0+margin,b0+margin,kind,{area},as!==1,c,edgeMode)) return true;}
       return false;};
-    const placeSub=()=>placeFlex(subArea,"sub",YARD_CLEAR+o.road,B.subMargin>=0?B.subMargin:8,30,[1,1.5,2,2.5,3,4]);
+    const placeSub=()=>placeFlex(subArea,"sub",YARD_CLEAR+o.road,subMargin,30,[1,1.5,2,2.5,3,4]);
     const placeSupport=()=>{
       if(placeFlex(supportArea,"support",o.road+6,0,16,[2,3,4,1.5,6])) return true;
       const n0=placed.length,h=supportArea/2;
@@ -905,7 +910,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const liquidMW=sum(s=>s.m*s.liquid/100),cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
   const maxHt=L.length?Math.max(...L.map(s=>s.height)):0,flags=[];
   const heavy=L.filter(s=>s.rackKg>B.rackKgLimit);
-  if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to 4:1, no side under 30 m, plus a "+(B.subMargin>=0?B.subMargin:8)+" m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
+  if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to 4:1, no side under 30 m, plus a "+(o.subMargin>=0?o.subMargin:(B.subMargin>=0?B.subMargin:8))+" m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
   if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
   if(!r.supOK) flags.push("Parking and support yards ("+fmt(supportArea,0)+" sqm, tried as one yard or two, no side under 16 m) do not fit. Try Optimise, or allow for parking inside the buildings.");
   if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
@@ -976,6 +981,9 @@ const $=id=>document.getElementById(id);
 /* ===== Explainers ===== */
 const TIP={
 circulation:"How roads are generated. Internal runs a spine drive through the middle with buildings either side. Perimeter runs a service loop just inside the boundary with buildings in the centre. External runs parallel drives out to the boundary, which suits phased campus expansion. Compare all three shows one option of each.",
+supportSqm:"Ground area for staff and visitor parking, laydown and support yards. Set 0 if parking goes inside the buildings or off site. It may be placed as one yard or split into two.",
+subSqm:"Plot area for the utility substation. 0 sizes it automatically from the facility load, assuming an air-insulated substation. A compact gas-insulated (GIS) substation needs far less land; enter its area to test it, and confirm with the utility.",
+subMargin:"Fence and clearance margin added around the substation plot on every side, in metres.",
 dockApron:"Depth of hardstanding in front of the loading dock for a truck to reverse and turn. The GRD puts two truck docks at the ground floor of the admin block, so this apron sits alongside it.",
 bandAxis:"Which way the zones inside an infill building run. Lengthwise keeps the electrical and mechanical rooms along the full length of the halls, which shortens busway runs and lets rack rows run the long way, as the GRD does. Crosswise turns them through 90 degrees: useful for testing a frontage or a phasing split, but it usually costs hall capacity. Campus layouts always run lengthwise.",
 circRow:"The circulation pattern used and the angle the blocks were rotated to.",
@@ -1178,16 +1186,16 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
 
 /* ===== State and form ===== */
 const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1,pins:[],pinning:false,psel:-1};
-const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron"];
+const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
-  s("dockApron",B.dockApron||30);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
+  s("dockApron",B.dockApron||30);s("supportSqm",P.supportSqm!=null?P.supportSqm:2000);s("subSqm",B.subSqm||0);s("subMargin",B.subMargin>=0?B.subMargin:8);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
   applyDensity();}
 /* Put one group of fields back to the values in the active basis of design. */
 const RESET_GROUPS={
   profile:["targetMW","kw"],
   rules:["setback","maxH","maxCov","storeys"],
-  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron"]
+  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin"]
 };
 function profileValue(id){
   const B=activeBOD(),P=B.profile[state.profile],D=B.density[state.density];
@@ -1201,6 +1209,9 @@ function profileValue(id){
     case "pondPct": return P.pond;
     case "roadW": return P.road;
     case "dockApron": return B.dockApron;
+    case "supportSqm": return P.supportSqm!=null?P.supportSqm:2000;
+    case "subSqm": return B.subSqm||0;
+    case "subMargin": return B.subMargin>=0?B.subMargin:8;
     case "kw": return D.kw;
     case "sqmRack": return D.sqmRack;
     case "liquid": return D.liquid;
@@ -1362,7 +1373,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
     massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
-    mix:state.mix.length?state.mix.slice():null,supportSqm:B.profile[state.profile].supportSqm||2000};}
+    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin"))};}
 
 /* ===== Map ===== */
 const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,preserveDrawingBuffer:true,attributionControl:{compact:true},
@@ -1535,6 +1546,8 @@ function schedule(coarse){
 }
 function runSolve(coarse,optimise){
   if(state.ring.length<3||state.drawing) {renderEmpty();return;}
+  /* sessions saved before a field existed leave it blank: fill from the profile */
+  NUM.forEach(id=>{if($(id).value===""){const v=profileValue(id);if(v!=null)$(id).value=v;}});
   const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
   if(optimise){o.optimise=true;o.optimiseUntil=Date.now()+8000;}
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=activeBOD();
