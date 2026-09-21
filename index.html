@@ -65,6 +65,9 @@ td{padding:4px 0;border-bottom:1px solid var(--line);vertical-align:top}
 td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8px}
 th{padding:4px 0;border-bottom:1px solid var(--line);text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;opacity:.65}
 th:last-child{text-align:right}
+.opmenu{position:relative;display:inline-block}
+.opmenu-list{position:absolute;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:4px;z-index:20;min-width:130px}
+.opmenu-list[hidden]{display:none}
 .pnode{width:17px;height:17px;border-radius:50%;background:#fff;border:3px solid #2D6A7A;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .pnode.sel{background:#2D6A7A;border-color:#fff}
 .limit{background:var(--warnbg);border-left:3px solid var(--warn);padding:8px 10px;margin:8px 0;font-size:14px}
@@ -242,6 +245,8 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button>
     <button class="btn" id="btnBase" type="button">Satellite</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
+    <span class="opmenu"><button class="btn" id="btnOne" type="button" aria-haspopup="true" aria-expanded="false">One-pager</button>
+      <span class="opmenu-list" id="oneMenu" hidden><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button></span></span>
     <button class="btn" id="btnPNG" type="button">PNG</button>
     <button class="btn" id="btnCSV" type="button">CSV</button>
     <button class="btn" id="btnGeo" type="button">GeoJSON</button>
@@ -259,7 +264,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 /* ===== Placeholder basis of design (generic, not from any company document) ===== */
 const PLACEHOLDER = {
   name:"Placeholder values", placeholder:true, version:1,
-  moduleMW:8, rowPitch:6.0, circFactor:1.22, floorM:6.0, roofPlantM:6, rackKgLimit:2000, dockApron:30, ecLevels:1,
+  moduleMW:8, rowPitch:6.0, circFactor:1.22, floorM:6.0, roofPlantM:6, rackKgLimit:2000, dockApron:30, ecLevels:0, roofShare:0.9, yardClear:15,
   gensPerModule:5, genKVA:3000, fuelHours:24, fuelLPerGen:15000,
   elec:{ EROOM:{crit:150, ecPerMW:200, admin:3000}, EMOD:{crit:70, ecPerMW:400, admin:3000} },
   density:{
@@ -293,20 +298,21 @@ function rectGap(r,q){const dx=Math.max(0,Math.max(q[0]-r[2],r[0]-q[2])),dy=Math
 function area(r){return (r[2]-r[0])*(r[3]-r[1]);}
 
 /* ===== building module ===== */
-const YARD_CLEAR=15;           /* BOD: 15 m around external electrical/mechanical yards */
+let YARD_CLEAR=15;           /* BOD: 15 m around external electrical/mechanical yards */
 function buildingSpec(m,o,B,dens){
   const d=B.density[dens],E=B.elec[o.elec];
   const racks=Math.round(m*1000/d.kw), hall=racks*d.sqmRack;
   const gross=hall*B.circFactor+E.crit*m, foot=gross/o.storeys;
   const D=Math.max(30,Math.min(75,Math.sqrt(foot/2)));
-  const L=foot/D, adminFoot=E.admin/3, La=Math.max(18,adminFoot/D), ecFoot=E.ecPerMW*m/Math.max(1,B.ecLevels||1);
-  const hrNeed=d.hr*m, roofCap=foot*0.9, spill=Math.max(0,hrNeed-roofCap);
+  const L=foot/D, adminFoot=E.admin/3, La=Math.max(18,adminFoot/D), ecLevels=(B.ecLevels>0?B.ecLevels:o.storeys), ecFoot=E.ecPerMW*m/Math.max(1,ecLevels);
+  const roofShare=(B.roofShare>0&&B.roofShare<=1)?B.roofShare:0.9;
+  const hrNeed=d.hr*m, roofCap=foot*roofShare, spill=Math.max(0,hrNeed-roofCap);
   const Lm=Math.max(La+L,Math.sqrt((foot+adminFoot+ecFoot+spill)*1.15));
   const Lh=Lm-La;
   const Ed=Math.max(12,ecFoot/Lh), Yd=spill>0?Math.max(10,spill/Lh):0;
   const apron=o.dockApron, H=Math.max(apron+D,Yd+D+Ed);
   return {m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
-    hrNeed,roofHR:Math.min(hrNeed,roofCap),spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
+    hrNeed,roofHR:Math.min(hrNeed,roofCap),roofCap,ecLevels,spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
     pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM:0)+1.5};
 }
 
@@ -605,6 +611,7 @@ function solveInfill(o,poly,B,siteArea,angles){
     score:mw*1e6-1e3};}
 
 function solve(o,poly,B,coarse,hintDeg){
+  YARD_CLEAR=(B.yardClear>0?B.yardClear:15);
   if(polyArea(poly)<0) poly=poly.slice().reverse();
   const siteArea=Math.abs(polyArea(poly));
   const mix=(o.mix&&o.mix.length)?o.mix:null;
@@ -633,9 +640,17 @@ function solve(o,poly,B,coarse,hintDeg){
   /* one placement pass against a given road set */
   const runPlacement=(P,bb,roads,fine,a)=>{
     const placed=[],step=Math.max(4,Math.sqrt(siteArea)/85)*(fine?1:2.6);
-    const free=(r,clear)=>{
+    /* Two neighbouring buildings share the clearance between them (one road
+       or one yard gap), so building-to-building checks use envelopes shrunk
+       by half their pads; everything else keeps the full envelope. */
+    const half=(r,m)=>{const px=m.padX/2,pt=m.padTop/2,pb=m.padBot/2;
+      return m.swap?[r[0]+pt,r[1]+px,r[2]-pb,r[3]-px]:[r[0]+px,r[1]+pt,r[2]-px,r[3]-pb];};
+    const free=(r,clear,self)=>{
       if(!rectFits(r,P,o.setback)) return false;
-      for(const q of placed) if(hit(r,q.r)) return false;
+      const rh=self?half(r,self):null;
+      for(const q of placed){
+        if(rh&&q.kind==="bldg"){ if(hit(rh,half(q.r,q.meta))) return false; }
+        else if(hit(r,q.r)) return false;}
       let near=false;
       for(const s of roads){const d=rectSeg(r,s);
         if(d<s.w/2+1) return false;
@@ -655,7 +670,7 @@ function solve(o,poly,B,coarse,hintDeg){
         for(const [ww,hh,sw] of (swap?[[w,h,false],[h,w,true]]:[[w,h,false]])){
           const r=[x,y,x+ww,y+hh];
           if(r[2]>bb[2]||r[3]>bb[3]) continue;
-          if(!free(r,clear)) continue;
+          if(!free(r,clear,kind==="bldg"?Object.assign({swap:sw},meta):null)) continue;
           if(!mode||(mode==="spread"&&!placed.length)){placed.push({r,kind,meta:Object.assign({swap:sw},meta)});return true;}
           const sc=mode==="edge"?edgeScore(r):spreadScore(r);
           if(sc>bestScore){bestScore=sc;best={r,kind,meta:Object.assign({swap:sw},meta)};}
@@ -678,7 +693,7 @@ function solve(o,poly,B,coarse,hintDeg){
           for(const [sx,sy] of (dx||dy?[[1,1],[-1,1],[1,-1],[-1,-1]]:[[1,1]])){
             const d=Math.hypot(dx,dy); if(d>=bd) continue;
             const r=[c[0]+sx*dx-ww/2,c[1]+sy*dy-hh/2,c[0]+sx*dx+ww/2,c[1]+sy*dy+hh/2];
-            if(!free(r,null)) continue;
+            if(!free(r,null,{swap:sw,padX,padTop,padBot})) continue;
             bd=d;best={r,kind:"bldg",meta:Object.assign({swap:sw,pinned:true,padX,padTop,padBot},meta)};}
       if(best){placed.push(best);return true;}
       return false;};
@@ -688,22 +703,31 @@ function solve(o,poly,B,coarse,hintDeg){
       if(placePinned(specs[i],{i,s:specs[i]},pins[i])){pinned.push(placed.pop());fixed.add(i);}}
     pinned.forEach(q=>placed.push(q));
     const pinFloor=placed.length, pinsPlaced=pinned.length;
-    const placeBuildings=()=>{let mw=0;const built=[],missed=[];
+    const bySize=specs.map((x,i)=>i).sort((p,q)=>specs[q].Lm*specs[q].H-specs[p].Lm*specs[p].H);
+    const placeBuildings=(mode,order,loose)=>{let mw=0;const built=[],missed=[];
       pinned.forEach(q=>{mw+=q.meta.s.m;built.push(q.meta.s);});
-      for(let i=0;i<specs.length;i++){const s=specs[i]; if(fixed.has(i)) continue;
+      for(const i of (order||specs.map((x,k)=>k))){const s=specs[i]; if(fixed.has(i)) continue;
         const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
-        if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,o.road+4,spreadMode)){mw+=s.m;built.push(s);}
+        if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,loose?null:o.road+4,mode===undefined?spreadMode:mode)){mw+=s.m;built.push(s);}
         else missed.push(s);}
       return {mw,built,missed,pinsPlaced};};
     const subS=Math.sqrt(subArea);
     let subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
     let pb=placeBuildings();
     if(fine&&pb.missed.length){
-      const keep=placed.splice(pinFloor);
-      const pb2=placeBuildings();
-      const sub2=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
-      if(pb2.mw>pb.mw&&sub2){pb=pb2;subOK=sub2;}
-      else {placed.splice(pinFloor);keep.forEach(q=>placed.push(q));}}
+      /* Tight sites: the spread pass scatters blocks and leaves no room for the
+         rest. Try again with buildings first, largest first, packed against the
+         boundary (then plain first-fit), and keep whichever carries more load. */
+      let best={pb,subOK,items:placed.slice(pinFloor)};
+      /* the last passes drop the "must front a road" rule: access drives are
+         added afterwards to any block left without one */
+      for(const [mode,loose] of [[spreadMode,false],["edge",false],[false,false],["edge",true],[false,true]]){
+        placed.splice(pinFloor);
+        const pb2=placeBuildings(mode,mode===spreadMode?undefined:bySize,loose);
+        const sub2=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
+        if(sub2&&pb2.mw>best.pb.mw) best={pb:pb2,subOK:sub2,items:placed.slice(pinFloor)};
+        if(best.pb.mw>=targetMW) break;}
+      placed.splice(pinFloor);best.items.forEach(q=>placed.push(q));pb=best.pb;subOK=best.subOK;}
     const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,edgeMode);
     const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,edgeMode);
     return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,pinsPlaced,subOK,pondOK,supOK};};
@@ -811,8 +835,8 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
       ["Typical floor plate",infill?fmt(L[0].foot,0)+" sqm ("+fmt(L[0].W,0)+" \u00D7 "+fmt(L[0].D,0)+" m)":"\u2014","plateRow"],
       ["Building footprint",fmt(sum(s=>s.foot+s.adminFoot),0)+" sqm","footprint"],
       ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",storeysUsed+" / "+fmt(maxHt,1)+" m","storeysRow"],
-      ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm","ecFoot"],
-      ["Heat rejection on roof",fmt(sum(s=>s.roofHR),0)+" sqm","roofHR"],
+      ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm"+(L.length&&L[0].ecLevels>1?" on "+L[0].ecLevels+" levels":""),"ecFoot"],
+      ["Heat rejection on roof (chiller deck)",fmt(sum(s=>s.roofHR),0)+" of "+fmt(sum(s=>s.roofCap||0),0)+" sqm usable","roofHR"],
       ["Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm","yardHR"],
       ["Heat to liquid",fmt(liquidMW,1)+" MW","liquidRow"],
       ["CDUs (2 MW, N+1 per building)",fmt(cdus,0),"cdus"],["ITE power streams",fmt(streams,0),"streams"],
@@ -881,8 +905,9 @@ adminGfa:"Floor area of the administration and support block, which holds office
 footprint:"Ground area covered by buildings. This is what the coverage limit applies to.",
 coverageRow:"Building footprint as a share of the site. Compare it with the zoning limit you entered.",
 storeysRow:"Number of floors and the resulting building height, including rooftop plant. Compare it with the height limit.",
-ecFoot:"Ground area of the energy centre, which houses transformers, switchgear, UPS and generators. It grows under EMOD and shrinks under EROOM.",
-roofHR:"Heat rejection equipment that fits on the building roof, which keeps it off the ground and frees site area.",
+ecFoot:"Ground area of the energy centre gantry, which houses transformers, switchgear, UPS and generators. The GRD gantry stacks plant on every floor of the building, so its footprint is the total area divided by the number of levels. It grows under EMOD and shrinks under EROOM.",
+roofHR:"Chillers on a raised deck over the data hall roof, as the GRD baseline does. The first figure is what this load needs; the second is what the roof can take, set by the profile\u2019s usable roof share. Anything beyond it goes to a ground yard.",
+distRow:"Straight-line distance from the centre of the site, not driving distance. Useful for latency, dark-fibre and staffing comparisons.",
 yardHR:"Heat rejection equipment that did not fit on the roof and sits in a ground-level yard. A large figure here is usually what stops more load fitting.",
 liquidRow:"How much of the IT load is cooled by liquid rather than air, and the percentage assumed.",
 cdus:"Coolant distribution units, which transfer heat from the rack liquid loop to the facility loop. Sized at 2 MW each with one spare per building.",
@@ -931,7 +956,9 @@ const CSV_ROWS=[
  ["fuelHours","Hours of generator fuel stored on site"],
  ["fuelLPerGen","Litres of fuel stored per generator"],
  ["dockApron","Depth of the loading dock apron for truck manoeuvring, m"],
- ["ecLevels","Levels in the energy centre gantry (1 = at grade, as the GRD site plan shows)"],
+ ["ecLevels","Levels in the energy centre gantry. 0 = same as the building storeys (the GRD gantry has plant on every floor); 1 = all at grade"],
+ ["yardClear","Clear distance kept around external electrical and mechanical yards, m"],
+ ["roofShare","Share of the data hall roof usable for the chiller deck, 0 to 1 (0.9 = 90%)"],
  ["rowPitch","Rack row pitch: one cold aisle, two rack rows and one hot aisle, m"],
  ["elec.EROOM.crit","EROOM: critical support area inside the building, sqm per MW"],
  ["elec.EROOM.ecPerMW","EROOM: outdoor energy centre area, sqm per MW"],
@@ -1234,14 +1261,16 @@ const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,
     layers:[{id:"osm",type:"raster",source:"osm"},{id:"sat",type:"raster",source:"sat",layout:{visibility:"none"}}]}});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"top-right");
 map.addControl(new maplibregl.ScaleControl({unit:"metric"}),"bottom-right");
-const COLORS={hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8"};
+const COLORS={hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)"};
 const EMPTY={type:"FeatureCollection",features:[]};
 map.on("load",()=>{
   map.addSource("layout",{type:"geojson",data:EMPTY});
   map.addSource("site",{type:"geojson",data:EMPTY});
   map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":1}});
   map.addLayer({id:"layout-fill",type:"fill",source:"layout",paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":1}});
-  map.addLayer({id:"layout-line",type:"line",source:"layout",paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
+  map.addLayer({id:"layout-line",type:"line",source:"layout",filter:["!=",["get","kind"],"roofhr"],paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
+  map.addLayer({id:"roof-line",type:"line",source:"layout",filter:["==",["get","kind"],"roofhr"],
+    paint:{"line-color":"#1F5F99","line-width":1.6,"line-dasharray":[2.5,1.5]}});
   map.addSource("detail",{type:"geojson",data:EMPTY});
   map.addLayer({id:"detail-fill",type:"fill",source:"detail",filter:["==",["geometry-type"],"Polygon"],
     paint:{"fill-color":"#4A5D6E","fill-opacity":0.33}});
@@ -1380,6 +1409,14 @@ function fitRing(){const R=state.ring;if(R.length<3)return;const b=new maplibreg
 
 /* ===== Solve scheduling ===== */
 let raf=null,pendingCoarse=true,fullTimer=null;
+/* straight-line distances from the site centre to VITRO reference points */
+const REFS=[
+  {name:"Distance to VITRO Makati 2",ll:[121.02259779967288,14.5645776285644]},
+  {name:"Distance to NAIA (airport)",ll:[121.01660327821048,14.513485631478169]},
+  {name:"Distance to VITRO Sta. Rosa",ll:[121.08119196940972,14.268864628290792]},
+  {name:"Distance to VITRO Clark",ll:[120.52957184058474,15.182044120476386]}];
+function haversineKm(a,b){const R=6371.0088,t=Math.PI/180,dl=(b[1]-a[1])*t,dn=(b[0]-a[0])*t;
+  const h=Math.sin(dl/2)**2+Math.cos(a[1]*t)*Math.cos(b[1]*t)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
 function schedule(coarse){
   if(!coarse){clearTimeout(fullTimer);fullTimer=setTimeout(()=>{runSolve(false);persist();},120);return;}
   pendingCoarse=true; if(raf) return;
@@ -1396,6 +1433,9 @@ function runSolve(coarse){
     : null;
   const res=solve(o,poly,B,coarse,state.lastDeg);
   if(!res.options.length) return;
+  const cen=F.toLL(poly.reduce((t,p)=>[t[0]+p[0]/poly.length,t[1]+p[1]/poly.length],[0,0]));
+  const dist=REFS.map(r=>[r.name,fmt(haversineKm(cen,r.ll),1)+" km","distRow"]);
+  res.options.forEach(op=>{op.dist=dist;op.rows=op.rows.concat(dist);});
   state.result=res;state.F=F;state.o=o;
   if(!coarse){state.opt=0;} state.opt=Math.min(state.opt,res.options.length-1);
   state.lastDeg=res.options[state.opt].deg;
@@ -1508,7 +1548,12 @@ function renderLayout(){
     const part=(u0,v0,u1,v1,kind,label,ar)=>{const a0=Math.min(U(u0),U(u1)),a1=Math.max(U(u0),U(u1));
       box(m.swap?[ix+v0,iy+a0,ix+v1,iy+a1]:[ix+a0,iy+v0,ix+a1,iy+v1],kind,label,ar);};
     if(s.Yd>0) part(s.La,0,s.Lm,s.Yd,"yard",tag("Heat rejection",s.spill),s.spill);
-    part(s.La,s.Yd,s.Lm,s.Yd+s.D,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D),s.L*s.D);
+    part(s.La,s.Yd,s.Lm,s.Yd+s.D,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D)
+      +'<br><span style="font-weight:400;opacity:.75">roof chillers '+sq(s.roofHR)+'</span>',s.L*s.D);
+    /* roof chiller deck: the share of the hall roof the chillers take, drawn
+       from the far end of the hall, inset so it reads as a raised platform */
+    if(s.roofHR>0){const f=Math.min(1,s.roofHR/Math.max(1,s.L*s.D)),ins=Math.min(2.5,s.D*0.06);
+      part(s.Lm-(s.Lm-s.La)*f+ins,s.Yd+ins,s.Lm-ins,s.Yd+s.D-ins,"roofhr",null);}
     part(s.La,s.Yd+s.D,s.Lm,s.Yd+s.D+s.Ed,"ec",tag("Energy centre",s.ecFoot),s.ecFoot);
     part(0,0,s.La,s.apron,"apron",tag("Loading dock",s.La*s.apron),s.La*s.apron);
     part(0,s.apron,s.La,s.apron+s.D,"admin",tag("Admin",s.adminFoot),s.adminFoot);
@@ -1562,7 +1607,7 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   <table>${op.rows.map(r=>`<tr><td>${r[0]}${r[2]&&TIP[r[2]]?`<button type="button" class="info" data-tip="${r[2]}" aria-label="What does ${esc(r[0])} mean?">i</button>`:""}</td><td>${r[1]}</td></tr>`).join("")}</table>
   <p class="hint">${esc(op.grid)}</p>
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
-  <div class="legend"><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:${COLORS.yard}">Heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span></div>
+  <div class="legend"><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:#6E95BD">Roof chiller deck (dashed)</span><span style="--c:${COLORS.yard}">Ground heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span></div>
   <p class="hint">Interior detail appears as you zoom in: rack rows at the profile's ${fmt(B.rowPitch||6,1)} m pitch, and one electrical bay per 2 MW power stream — ${op.infill?"drawn as rooms, since an infill building holds its electrical plant inside":(o.elec==="EMOD"?"drawn as separate enclosures for EMOD":"drawn as one continuous room for EROOM")}. It shows the arrangement the basis of design fixes, not an engineered rack layout.</p>`;}
 $("btnNext").onclick=()=>{if(!state.result)return;state.opt=(state.opt+1)%state.result.options.length;state.lastDeg=state.result.options[state.opt].deg;renderLayout();renderLive(false);renderSpec();};
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
@@ -1586,6 +1631,153 @@ $("btnPNG").onclick=()=>{if(!state.result)return;
     g.fillStyle="#5E6B75";g.fillText(`${DLABEL[o.density]}, ${o.elec}, ${activeBOD().name}. ${state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors"}. Concept only.`,14*d,mc.height+86*d);
     try{c.toBlob(b=>download(base()+".png",b),"image/png");}catch(e){status("The map layer blocked image export. Try the street map.");}
   });map.triggerRepaint();};
+
+
+/* ===== One-pager =====
+   A single landscape sheet in the style of a site pull-out: the plan and a
+   location sketch on the left, the key specification on the right. The same
+   content goes to a printable page (save as PDF) or a PowerPoint slide. */
+function siteBoundsLL(){const xs=state.ring.map(p=>p[0]),ys=state.ring.map(p=>p[1]);
+  return [[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]];}
+/* wait for a map event, but never hang: tiles can stall offline */
+function mapEvent(ev,ms){return new Promise(ok=>{let done=false;const f=()=>{if(!done){done=true;ok();}};map.once(ev,f);setTimeout(f,ms);});}
+function captureSitePlan(){return new Promise(async res=>{
+  const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()};
+  map.fitBounds(siteBoundsLL(),{padding:70,duration:0,bearing:0,pitch:0});
+  await mapEvent("idle",4000);renderLayout();map.triggerRepaint();await mapEvent("render",800);{{
+      const mc=map.getCanvas(),d=devicePixelRatio,c=document.createElement("canvas");
+      c.width=mc.width;c.height=mc.height;const g=c.getContext("2d");
+      g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);
+      try{g.drawImage(mc,0,0);}catch(e){}
+      const op=state.result.options[state.opt],F=state.F;
+      const pt=(x,y)=>{const q=map.project(F.toLL(rot([x,y],op.a)));return [q.x*d,q.y*d];};
+      /* redraw the plan as vectors over the basemap, so the sheet never
+         depends on what the WebGL canvas happened to hold */
+      const ring=ll=>{g.beginPath();ll.forEach((p,i)=>{const q=map.project(p);i?g.lineTo(q.x*d,q.y*d):g.moveTo(q.x*d,q.y*d);});g.closePath();};
+      ring(state.ring);g.fillStyle=COLORS.landscape;g.fill();
+      for(const f of (state.layoutGeo||[])){if(f.geometry.type!=="Polygon")continue;const k=f.properties.kind;
+        ring(f.geometry.coordinates[0]);
+        if(k==="roofhr"){g.fillStyle="rgba(31,95,153,0.20)";g.fill();g.setLineDash([6*d,4*d]);g.strokeStyle="#1F5F99";g.lineWidth=1.6*d;g.stroke();g.setLineDash([]);continue;}
+        g.fillStyle=COLORS[k]||"#ccc";g.fill();if(k!=="road"){g.strokeStyle="rgba(29,43,54,.55)";g.lineWidth=0.8*d;g.stroke();}}
+      ring(state.ring);g.setLineDash([9*d,5*d]);g.strokeStyle="#0F6E8C";g.lineWidth=2.5*d;g.stroke();g.setLineDash([]);
+      const fs1=Math.max(13*d,c.width/70),fs2=fs1*0.82;
+      const label=(xy,t,sub)=>{g.font=`600 ${fs1}px Barlow, Arial`;const w=Math.max(g.measureText(t).width,sub?g.measureText(sub).width:0)+fs1*0.8,h=(sub?2.6:1.55)*fs1;
+        g.fillStyle="rgba(255,255,255,.9)";g.fillRect(xy[0]-w/2,xy[1]-h/2,w,h);g.strokeStyle="rgba(29,43,54,.4)";g.strokeRect(xy[0]-w/2,xy[1]-h/2,w,h);
+        g.fillStyle="#1D2B36";g.textAlign="center";g.fillText(t,xy[0],xy[1]+(sub?-0.2:0.38)*fs1);
+        if(sub){g.font=`${fs2}px Barlow, Arial`;g.fillText(sub,xy[0],xy[1]+0.95*fs1);}g.textAlign="left";};
+      if(op.infill&&op.rect){const r=op.rect,b=op.built[0];label(pt((r[0]+r[2])/2,(r[1]+r[3])/2),"B1 "+fmt(b.m,0)+" MW",b.storeys+" floors");}
+      for(const pl of op.placed){const r=pl.r,c2=pt((r[0]+r[2])/2,(r[1]+r[3])/2);
+        if(pl.kind==="bldg") label(c2,"B"+(pl.meta.i+1)+" "+fmt(pl.meta.s.m,0)+" MW",DSHORT[pl.meta.s.dens]+(pl.meta.pinned?" · pinned":""));
+        else if(pl.kind==="sub") label(c2,"Substation");}
+      if(op.gate){const e=pt(op.gate.edge[0],op.gate.edge[1]);g.fillStyle="#D97742";g.beginPath();g.arc(e[0],e[1],7*d,0,7);g.fill();
+        g.font=`600 ${12*d}px Barlow, Arial`;g.fillText("Gate",e[0]+10*d,e[1]+4*d);}
+      /* north arrow and scale */
+      const nx=c.width-40*d,ny=40*d;g.fillStyle="#1D2B36";g.beginPath();g.moveTo(nx,ny-18*d);g.lineTo(nx-8*d,ny+6*d);g.lineTo(nx,ny);g.lineTo(nx+8*d,ny+6*d);g.closePath();g.fill();
+      g.font=`600 ${12*d}px Barlow, Arial`;g.textAlign="center";g.fillText("N",nx,ny+22*d);g.textAlign="left";
+      const mpp=metresPerPixel()/d,nice=[10,20,50,100,200,500].find(v=>v/mpp>60*d)||500,px=nice/mpp;
+      g.fillStyle="rgba(255,255,255,.85)";g.fillRect(14*d,c.height-38*d,px+60*d,26*d);g.fillStyle="#1D2B36";g.fillRect(20*d,c.height-22*d,px,4*d);
+      g.fillText(nice+" m",26*d+px,c.height-17*d);
+      const url=c.toDataURL("image/jpeg",0.9);
+      map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});renderLayout();res(url);}}});}
+function drawLocationSketch(){
+  const W=1400,H=380,c=document.createElement("canvas");c.width=W;c.height=H;const g=c.getContext("2d");
+  const cen=state.ring.reduce((t,p)=>[t[0]+p[0]/state.ring.length,t[1]+p[1]/state.ring.length],[0,0]);
+  const refs=REFS.map(r=>({name:r.name.replace("Distance to ",""),ll:r.ll,km:haversineKm(cen,r.ll)}));
+  const all=[cen].concat(refs.map(r=>r.ll)),k=Math.cos(cen[1]*Math.PI/180);
+  let x0=Math.min(...all.map(p=>p[0])),x1=Math.max(...all.map(p=>p[0])),y0=Math.min(...all.map(p=>p[1])),y1=Math.max(...all.map(p=>p[1]));
+  const span=Math.max((x1-x0)*k,y1-y0,0.05);x0-=span*0.06/k;x1+=span*0.06/k;y0-=span*0.06;y1+=span*0.06;
+  const L=330,R=W-330,T=30,Bt=H-36,sc=Math.min((R-L)/((x1-x0)*k),(Bt-T)/(y1-y0));
+  const ox=L+((R-L)-(x1-x0)*k*sc)/2,oy=T+((Bt-T)-(y1-y0)*sc)/2;
+  const P=ll=>[ox+(ll[0]-x0)*k*sc,oy+(y1-ll[1])*sc];
+  g.fillStyle="#EEF3F6";g.fillRect(0,0,W,H);
+  const S=P(cen);
+  /* lines first, then points, then labels placed to avoid each other */
+  refs.forEach(r=>{r.q=P(r.ll);g.strokeStyle="#8C99A3";g.setLineDash([7,6]);g.lineWidth=2;g.beginPath();g.moveTo(S[0],S[1]);g.lineTo(r.q[0],r.q[1]);g.stroke();g.setLineDash([]);});
+  const boxes=[];const clash=bx=>boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]);
+  const put=(x,y,t,font,fill,bg)=>{g.font=font;const w=g.measureText(t).width+(bg?16:4),h=32;
+    let cand=[[x+14,y-16],[x-14-w,y-16],[x+14,y+8],[x-14-w,y+8],[x+14,y-44],[x-14-w,y-44],[x-w/2,y+14],[x-w/2,y-48]];
+    let bx=null;for(const [cx,cy] of cand){const t2=[cx,cy,cx+w,cy+h];if(!clash(t2)&&cx>2&&cx+w<W-2&&cy>2&&cy+h<H-2){bx=t2;break;}}
+    if(!bx){const cx=Math.min(Math.max(2,x+12),W-w-2),cy=Math.min(Math.max(2,y-12),H-h-2);bx=[cx,cy,cx+w,cy+h];}
+    boxes.push(bx);if(bg){g.fillStyle=bg;g.fillRect(bx[0],bx[1],w,h);}g.fillStyle=fill;g.textAlign="left";g.fillText(t,bx[0]+(bg?8:2),bx[1]+23);};
+  refs.forEach(r=>{g.fillStyle="#0F6E8C";g.beginPath();g.arc(r.q[0],r.q[1],8,0,7);g.fill();boxes.push([r.q[0]-9,r.q[1]-9,r.q[0]+9,r.q[1]+9]);});
+  g.fillStyle="#D97742";g.beginPath();g.arc(S[0],S[1],11,0,7);g.fill();g.strokeStyle="#fff";g.lineWidth=3;g.stroke();boxes.push([S[0]-12,S[1]-12,S[0]+12,S[1]+12]);
+  put(S[0],S[1],"Site","700 26px Barlow, Arial","#1D2B36");
+  refs.slice().sort((a,b)=>a.km-b.km).forEach(r=>put(r.q[0],r.q[1],r.name+"  "+fmt(r.km,1)+" km","600 23px Barlow, Arial","#FFFFFF","#1D2B36"));
+  g.font="18px Barlow, Arial";g.fillStyle="#5E6B75";g.textAlign="left";g.fillText("Straight-line distances from the site centre. Schematic.",14,H-14);
+  return c.toDataURL("image/png");}
+function onePagerData(){
+  const op=state.result.options[state.opt],o=state.o,B=activeBOD();
+  const want=["siteArea","circRow","itLoad","facLoad","racks","gfa","coverageRow","storeysRow","ecFoot","roofHR","yardHR","gensRow","fuelRow","subRow"];
+  const by={};op.rows.forEach(r=>{if(r[2]&&!by[r[2]])by[r[2]]=r;});
+  const spec=want.filter(k=>by[k]&&!(k==="yardHR"&&/^0 /.test(String(by[k][1])))).map(k=>[by[k][0],String(by[k][1])]);
+  const ph=(op.phases&&op.phases.length?op.phases:op.built.map(s=>({s}))).map((p,i)=>"B"+(i+1)+" "+fmt(p.s.m,0)+" MW");
+  return {title:$("projName").value.trim()||"Data centre concept",
+    sub:(o.profile==="metro"?"Metro":"Campus")+" · "+DLABEL[o.density]+" · "+o.elec+" · option "+String.fromCharCode(65+state.opt),
+    headline:[[fmt(op.it,0)+" MW","IT load (target "+o.targetMW+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
+    spec,phases:ph.join("  ·  "),dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]),
+    limit:op.limit,flags:op.flags.slice(0,2),bod:B.name,placeholder:!!B.placeholder,
+    date:new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"}),
+    credit:state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors"};}
+async function onePagerPDF(){
+  if(!state.result){status("Generate a layout first.");return;}
+  const w=window.open("","_blank");if(!w){status("Allow pop-ups for this page to open the one-pager.");return;}
+  w.document.write("<p style='font:16px sans-serif;padding:20px'>Preparing the one-pager…</p>");
+  const plan=await captureSitePlan(),loc=drawLocationSketch(),D=onePagerData();
+  const E=t=>esc(t);
+  w.document.open();w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${E(D.title)} one-pager</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&family=Barlow+Condensed:wght@600&display=swap" rel="stylesheet">
+<style>@page{size:13.333in 7.5in;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Barlow,Arial,sans-serif;color:#1D2B36;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet{width:13.333in;height:7.5in;padding:.32in .4in;display:flex;flex-direction:column;overflow:hidden}
+h1{font:600 30px "Barlow Condensed",Arial;margin:0}.sub{color:#5E6B75;font-size:14px;margin:2px 0 0}.rule{height:3px;background:linear-gradient(90deg,#1F5F99,#D97742);margin:8px 0 12px}
+.grid{flex:1;display:grid;grid-template-columns:1.25fr 1fr;gap:18px;min-height:0}.right{min-height:0;overflow:hidden}.left{display:grid;grid-template-rows:1fr auto;gap:8px;min-height:0}
+.left img{width:100%;height:100%;object-fit:contain;background:#fff;border:1px solid #C9D3DA;min-height:0}.left .loc{height:1.75in;object-fit:contain;background:#EEF3F6}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}.kpi{background:#1D2B36;color:#fff;padding:6px 10px}.kpi b{font:600 22px "Barlow Condensed",Arial;display:block}.kpi span{font-size:11px;opacity:.8}
+table{width:100%;border-collapse:collapse;font-size:11px}th{background:#1F5F99;color:#fff;text-align:left;padding:3px 7px;font-weight:600}td{padding:2px 7px;border-bottom:1px solid #DDE3E8}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.phases{font-size:12px;margin:6px 0;padding:5px 8px;background:#EEF3F6}.note{font-size:11px;color:#5E6B75;margin-top:6px}.flag{font-size:11px;color:#8A3B12}
+.foot{display:flex;justify-content:space-between;font-size:10px;color:#7E8C96;margin-top:8px}.warn{background:#FFF3D6;padding:4px 8px;font-size:11px;margin-bottom:6px}
+@media screen{body{background:#888}.sheet{background:#fff;margin:20px auto;box-shadow:0 2px 12px rgba(0,0,0,.3)}}</style></head><body><div class="sheet">
+<h1>${E(D.title)}</h1><p class="sub">${E(D.sub)}</p><div class="rule"></div>
+<div class="grid"><div class="left"><img src="${plan}" alt="Site plan"><img class="loc" src="${loc}" alt="Location and distances"></div>
+<div class="right">${D.placeholder?'<div class="warn">Placeholder design values: import the basis of design profile before sharing.</div>':''}
+<div class="kpis">${D.headline.map(k=>`<div class="kpi"><b>${E(k[0])}</b><span>${E(k[1])}</span></div>`).join("")}</div>
+<table><tr><th>Item</th><th style="text-align:right">Description</th></tr>${D.spec.map(r=>`<tr><td>${E(r[0])}</td><td>${E(r[1])}</td></tr>`).join("")}</table>
+<div class="phases"><b>Phasing:</b> ${E(D.phases||"—")}</div>
+<table><tr><th>Straight-line distance to</th><th style="text-align:right">km</th></tr>${D.dist.map(r=>`<tr><td>${E(r[0])}</td><td>${E(r[1])}</td></tr>`).join("")}</table>
+<p class="note">${E(D.limit)}</p>${D.flags.map(f=>`<div class="flag">• ${E(f)}</div>`).join("")}</div></div>
+<div class="foot"><span>${E(D.bod)} · Concept test-fit only; not for design or permitting · ${E(D.credit)}</span><span>${E(D.date)}</span></div></div>
+<scr${""}ipt>window.onload=()=>setTimeout(()=>window.print(),600);</scr${""}ipt></body></html>`);w.document.close();}
+function loadScript(src){return new Promise((ok,bad)=>{const s=document.createElement("script");s.src=src;s.onload=ok;s.onerror=()=>bad(new Error("Could not load "+src));document.head.appendChild(s);});}
+async function onePagerPPT(){
+  if(!state.result){status("Generate a layout first.");return;}
+  status("Building the slide…");
+  try{ if(!window.PptxGenJS) await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"); }
+  catch(e){status("PowerPoint export needs an internet connection the first time. Use PDF (print) offline.");return;}
+  const plan=await captureSitePlan(),loc=drawLocationSketch(),D=onePagerData();
+  const pp=new PptxGenJS();pp.layout="LAYOUT_WIDE";const sl=pp.addSlide();const F="Arial",ink="1D2B36",blue="1F5F99";
+  sl.addText(D.title,{x:.4,y:.25,w:12.5,h:.5,fontFace:F,fontSize:26,bold:true,color:ink});
+  sl.addText(D.sub,{x:.4,y:.72,w:12.5,h:.3,fontFace:F,fontSize:12,color:"5E6B75"});
+  sl.addShape(pp.ShapeType.rect,{x:.4,y:1.05,w:12.53,h:.04,fill:{color:blue},line:{color:blue}});
+  const img=new Image();img.src=plan;await img.decode();const ar=img.width/img.height,bw=7.1,bh=4.25;
+  let iw=bw,ih=bw/ar;if(ih>bh){ih=bh;iw=bh*ar;}
+  sl.addImage({data:plan,x:.4+(bw-iw)/2,y:1.2,w:iw,h:ih});
+  sl.addImage({data:loc,x:.4,y:5.55,w:1.55*1400/380,h:1.55});
+  D.headline.forEach((k,i)=>{sl.addShape(pp.ShapeType.rect,{x:7.75+i*1.75,y:1.2,w:1.65,h:.7,fill:{color:ink},line:{color:ink}});
+    sl.addText([{text:k[0],options:{bold:true,fontSize:16,color:"FFFFFF",breakLine:true}},{text:k[1],options:{fontSize:9,color:"DDE3E8"}}],{x:7.8+i*1.75,y:1.22,w:1.6,h:.66,fontFace:F,valign:"middle"});});
+  const hdr=(a,b)=>[{text:a,options:{bold:true,color:"FFFFFF",fill:{color:blue}}},{text:b,options:{bold:true,color:"FFFFFF",fill:{color:blue},align:"right"}}];
+  const rows=[hdr("Item","Description")].concat(D.spec.map(r=>[{text:r[0]},{text:r[1],options:{align:"right"}}]));
+  sl.addTable(rows,{x:7.75,y:2.0,w:5.2,colW:[2.6,2.6],fontFace:F,fontSize:9,color:ink,border:{type:"solid",pt:.5,color:"DDE3E8"},rowH:.2,margin:.03});
+  const ty=2.0+rows.length*.205+.08;
+  sl.addText("Phasing: "+(D.phases||"—"),{x:7.75,y:ty,w:5.2,h:.3,fontFace:F,fontSize:9,color:ink,fill:{color:"EEF3F6"}});
+  const drows=[hdr("Straight-line distance to","km")].concat(D.dist.map(r=>[{text:r[0]},{text:r[1],options:{align:"right"}}]));
+  sl.addTable(drows,{x:7.75,y:ty+.38,w:5.2,colW:[3.6,1.6],fontFace:F,fontSize:9,color:ink,border:{type:"solid",pt:.5,color:"DDE3E8"},rowH:.2,margin:.03});
+  sl.addText([D.limit].concat(D.flags.map(f=>"• "+f)).join("\n"),{x:7.75,y:ty+.38+drows.length*.205+.05,w:5.2,h:.6,fontFace:F,fontSize:8,color:"5E6B75",valign:"top"});
+  sl.addText(D.bod+" · Concept test-fit only; not for design or permitting · "+D.credit+" · "+D.date,{x:.4,y:7.12,w:12.5,h:.25,fontFace:F,fontSize:8,color:"7E8C96"});
+  if(D.placeholder) sl.addText("Placeholder design values: import the basis of design profile before sharing.",{x:7.75,y:.72,w:5.2,h:.3,fontFace:F,fontSize:9,color:"8A3B12",align:"right"});
+  await pp.writeFile({fileName:base()+"-one-pager.pptx"});status("Slide saved.");}
+$("btnOne").onclick=e=>{e.stopPropagation();const m=$("oneMenu");m.hidden=!m.hidden;$("btnOne").setAttribute("aria-expanded",String(!m.hidden));};
+document.addEventListener("click",()=>{$("oneMenu").hidden=true;$("btnOne").setAttribute("aria-expanded","false");});
+$("btnOnePDF").onclick=()=>{$("oneMenu").hidden=true;onePagerPDF();};
+$("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
