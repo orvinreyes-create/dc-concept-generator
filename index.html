@@ -1335,9 +1335,9 @@ function drawRoadHandles(){
     el.title="Drag to move this junction. Click to select, then Delete to remove.";
     const mk=new maplibregl.Marker({element:el,draggable:true}).setLngLat(p).addTo(map);
     let moved=false;
-    mk.on("dragstart",()=>{moved=true;});
+    mk.on("dragstart",()=>{moved=true;state.dragging=true;});
     mk.on("drag",()=>{const ll=mk.getLngLat();R.nodes[i]=[ll.lng,ll.lat];schedule(true);});
-    mk.on("dragend",()=>{schedule(false);persist();setTimeout(()=>moved=false,0);});
+    mk.on("dragend",()=>{state.dragging=false;schedule(false);persist();setTimeout(()=>moved=false,0);});
     el.addEventListener("click",ev=>{ev.stopPropagation();if(moved)return;
       state.rsel=(state.rsel===i?-1:i);drawRoadHandles();});
     rNodes.push(mk);});
@@ -1384,9 +1384,9 @@ function drawPinHandles(){
     el.title="Pinned building B"+(i+1)+" of the mix. Drag to move it. Click to select, then Delete to unpin.";
     const mk=new maplibregl.Marker({element:el,draggable:true}).setLngLat(p).addTo(map);
     let moved=false;
-    mk.on("dragstart",()=>{moved=true;});
+    mk.on("dragstart",()=>{moved=true;state.dragging=true;});
     mk.on("drag",()=>{const ll=mk.getLngLat();state.pins[i]=[ll.lng,ll.lat];schedule(true);});
-    mk.on("dragend",()=>{schedule(false);persist();setTimeout(()=>moved=false,0);});
+    mk.on("dragend",()=>{state.dragging=false;schedule(false);persist();setTimeout(()=>moved=false,0);});
     el.addEventListener("click",ev=>{ev.stopPropagation();if(moved)return;
       state.psel=(state.psel===i?-1:i);drawPinHandles();});
     pMarks.push(mk);});}
@@ -1780,8 +1780,8 @@ function renderLayout(){
   const dsrc=map.getSource("detail");
   if(dsrc) dsrc.setData(buildDetail(op,o,activeBOD()));
   state.layoutGeo=feats;state.pendingLayout=!src;
-  if(state.editRoads) drawRoadHandles();
-  if(state.pins.length) drawPinHandles();
+  /* never rebuild handles mid-drag: that would drop the marker being dragged */
+  if(!state.dragging){ if(state.editRoads) drawRoadHandles(); if(state.pins.length) drawPinHandles(); }
   /* boundary dimensions */
   if(state.ring.length>2){const Fm=state.F;
     const pts=state.ring.map(Fm.toM);
