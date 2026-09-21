@@ -1377,14 +1377,16 @@ function drawRoadHandles(){
   const R=state.roadsLL;
   R.nodes.forEach((p,i)=>{
     const el=document.createElement("div");el.className="rnode"+(i===state.rsel?" sel":"");
-    el.title="Drag to move this junction. Click to select, then Delete to remove.";
+    el.title="Drag to move this corner. Double-click to remove it, or click to select and press Delete / Remove corner.";
     const mk=new maplibregl.Marker({element:el,draggable:true}).setLngLat(p).addTo(map);
     let moved=false;
     mk.on("dragstart",()=>{moved=true;state.dragging=true;});
     mk.on("drag",()=>{const ll=mk.getLngLat();R.nodes[i]=[ll.lng,ll.lat];schedule(true);});
     mk.on("dragend",()=>{state.dragging=false;schedule(false);persist();setTimeout(()=>moved=false,0);});
     el.addEventListener("click",ev=>{ev.stopPropagation();if(moved)return;
-      state.rsel=(state.rsel===i?-1:i);drawRoadHandles();});
+      state.rsel=(state.rsel===i?-1:i);$("btnRemove").disabled=state.rsel<0&&(state.sel<0||state.ring.length<=3);drawRoadHandles();
+      if(state.rsel>=0) status("Road corner selected. Press Delete, click Remove corner, or double-click it to remove.");});
+    el.addEventListener("dblclick",ev=>{ev.stopPropagation();ev.preventDefault();state.rsel=i;deleteRoadNode();status("Road corner removed.");});
     rNodes.push(mk);});
   R.edges.forEach((e,k)=>{
     const a=R.nodes[e[0]],b=R.nodes[e[1]];
@@ -1398,8 +1400,18 @@ function drawRoadHandles(){
 function deleteRoadNode(){
   const R=state.roadsLL;if(!R||state.rsel<0)return;
   const i=state.rsel;
-  R.edges=R.edges.filter(e=>e[0]!==i&&e[1]!==i).map(e=>[e[0]>i?e[0]-1:e[0],e[1]>i?e[1]-1:e[1]]);
-  R.nodes.splice(i,1);state.rsel=-1;
+  /* a bend in a road (two roads meeting) is removed by joining its two
+     neighbours, so the road stays continuous; a junction or dead end is
+     removed together with the roads that end at it */
+  const touch=R.edges.filter(e=>e[0]===i||e[1]===i);
+  let keep=R.edges.filter(e=>e[0]!==i&&e[1]!==i);
+  if(touch.length===2){const a=touch[0][0]===i?touch[0][1]:touch[0][0],b=touch[1][0]===i?touch[1][1]:touch[1][0];
+    if(a!==b&&!keep.some(e=>(e[0]===a&&e[1]===b)||(e[0]===b&&e[1]===a))) keep.push([a,b]);}
+  R.edges=keep.map(e=>[e[0]>i?e[0]-1:e[0],e[1]>i?e[1]-1:e[1]]);
+  R.nodes.splice(i,1);state.rsel=-1;$("btnRemove").disabled=state.sel<0;
+  /* drop any junctions left with no road */
+  const used=new Set(R.edges.flat());
+  for(let k=R.nodes.length-1;k>=0;k--) if(!used.has(k)){R.nodes.splice(k,1);R.edges=R.edges.map(e=>[e[0]>k?e[0]-1:e[0],e[1]>k?e[1]-1:e[1]]);}
   if(!R.edges.length){state.roadsLL=null;state.editRoads=false;$("btnRoads").setAttribute("aria-pressed","false");$("btnRoadsReset").hidden=true;status("Roads back to automatic.");}
   drawRoadHandles();schedule(false);persist();}
 $("btnRoads").onclick=()=>{
@@ -1575,7 +1587,7 @@ function updateSiteSource(){const src=map.getSource("site");if(!src)return;
   const coords=R.concat(R.length>=3?[R[0]]:[]);
   src.setData({type:"Feature",geometry:R.length>=3?{type:"Polygon",coordinates:[coords]}:{type:"LineString",coordinates:coords}});}
 
-$("btnRemove").onclick=removeSelected;
+$("btnRemove").onclick=()=>{if(state.editRoads&&state.rsel>=0){deleteRoadNode();status("Road corner removed.");}else removeSelected();};
 document.addEventListener("keydown",e=>{
   if((e.key==="Delete"||e.key==="Backspace")&&state.editRoads&&state.rsel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();deleteRoadNode();return;}
   if((e.key==="Delete"||e.key==="Backspace")&&state.psel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();deletePin();return;}
