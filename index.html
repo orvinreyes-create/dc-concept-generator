@@ -1177,6 +1177,16 @@ const LS_BOD="dccg.bod.v1", LS_PROJ="dccg.projects.v1", LS_ACTIVE="dccg.bod.acti
 function lsGet(k,d){try{return JSON.parse(localStorage.getItem(k))??d;}catch(e){return d;}}
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
 function profiles(){return lsGet(LS_BOD,[]);}
+/* The design-value fields (kW per rack, sqm per rack, heat to liquid, rack
+   weight, heat rejection, PUE) override the profile for the density tier
+   chosen under Rack density. Buildings in a mix that use other tiers keep
+   that tier's profile values. */
+function effectiveBOD(o){const B=JSON.parse(JSON.stringify(activeBOD())),d=B.density[state.density];
+  const num=v=>typeof v==="number"&&isFinite(v);
+  if(d){if(num(o.kw)&&o.kw>0)d.kw=o.kw;if(num(o.sqmRack)&&o.sqmRack>0)d.sqmRack=o.sqmRack;if(num(o.liquid))d.liquid=o.liquid;
+    if(num(o.rackKg))d.rackKg=o.rackKg;if(num(o.hrPerMW)&&o.hrPerMW>=0)d.hr=o.hrPerMW;}
+  if(num(o.pue)&&o.pue>=1&&B.pue[state.profile]) B.pue[state.profile][state.density]=o.pue;
+  return B;}
 function activeBOD(){const id=localStorage.getItem(LS_ACTIVE);return profiles().find(p=>p.id===id)||PLACEHOLDER;}
 function validateBOD(p){
   const need=["moduleMW","circFactor","floorM","elec","density","pue","profile"];
@@ -1589,7 +1599,7 @@ function runSolve(coarse,optimise){
   NUM.forEach(id=>{if($(id).value===""){const v=profileValue(id);if(v!=null)$(id).value=v;}});
   const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
   if(optimise){o.optimise=true;o.optimiseUntil=Date.now()+8000;}
-  const F=frame(state.ring), poly=state.ring.map(F.toM), B=activeBOD();
+  const F=frame(state.ring), poly=state.ring.map(F.toM), B=effectiveBOD(o);
   o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
   o.pins=(o.pinsLL||[]).map(F.toM);
   o.customRoads=(o.roadsLL&&o.roadsLL.edges.length)
