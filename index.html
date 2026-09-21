@@ -48,6 +48,9 @@ summary{cursor:pointer;font:600 16px "Barlow Condensed",sans-serif;padding:4px 0
 .live small{color:var(--muted);font-size:12px}
 .live .lim{font-size:13px;margin-top:6px}
 .drawhint{position:absolute;top:56px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:6px 10px;border-radius:4px;font-size:13px;z-index:2}
+.rnode{width:15px;height:15px;border-radius:3px;background:#fff;border:3px solid #D97742;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.rnode.sel{background:#B03A2E;border-color:#fff}
+.rmid{width:11px;height:11px;border-radius:2px;background:rgba(255,255,255,.85);border:2px dashed #D97742;cursor:copy}
 .vtx{width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #0F6E8C;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .vtx.sel{background:#B03A2E;border-color:#fff}
 .mid{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.85);border:2px dashed #0F6E8C;cursor:copy}
@@ -229,6 +232,8 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnDraw" type="button" aria-pressed="false">Draw site</button>
     <button class="btn" id="btnFinish" type="button" hidden>Finish</button>
     <button class="btn" id="btnRemove" type="button" disabled>Remove corner</button>
+    <button class="btn" id="btnRoads" type="button" aria-pressed="false">Edit roads</button>
+    <button class="btn" id="btnRoadsReset" type="button" hidden>Auto roads</button>
     <button class="btn" id="btnBase" type="button">Satellite</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
     <button class="btn" id="btnPNG" type="button">PNG</button>
@@ -337,33 +342,81 @@ function clipLine(P,a,b){
     if(pip(p[0],p[1],P)&&ts[i+1]-ts[i]>1e-3) out.push([ts[i],ts[i+1]]);}
   return out.map(([t0,t1])=>[[a[0]+t0*(b[0]-a[0]),a[1]+t0*(b[1]-a[1])],[a[0]+t1*(b[0]-a[0]),a[1]+t1*(b[1]-a[1])]]);}
 function segLen(s){return Math.hypot(s.b[0]-s.a[0],s.b[1]-s.a[1]);}
-function skeleton(type,P,o,pitch){
-  const w=o.road,inner=insetPoly(P,o.setback+w/2+1);
-  const segs=[];
-  const addLine=(a,b,kind)=>{for(const sp of clipLine(inner,a,b)){
-    if(Math.hypot(sp[1][0]-sp[0][0],sp[1][1]-sp[0][1])>w) segs.push({a:sp[0],b:sp[1],w:w,kind:kind});}};
-  if(type!=="internal"){ for(let i=0;i<inner.length;i++) segs.push({a:inner[i],b:inner[(i+1)%inner.length],w:w,kind:"loop"}); }
-  if(type!=="perimeter"){
-    const xs=inner.map(p=>p[0]),ys=inner.map(p=>p[1]);
-    const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
-    const horiz=(x1-x0)>=(y1-y0),cx=(x0+x1)/2,cy=(y0+y1)/2;
-    const span=horiz?x1-x0:y1-y0, base=horiz?x0:y0;
-    /* Bands are sized to hold a building, then the drives go between them.
-       Dividing the site into equal parts instead leaves bands too narrow to
-       build in, which is how a site ends up with roads and nothing else. */
-    const nb=Math.max(1,Math.floor((span+w)/(pitch+w)));
-    const total=nb*pitch+(nb-1)*w, start=base+(span-total)/2;
-    const between=[];
-    for(let i=1;i<nb;i++) between.push(start+i*pitch+(i-0.5)*w);
-    if(type==="internal"){
-      if(horiz) addLine([x0-10,cy],[x1+10,cy],"spine"); else addLine([cx,y0-10],[cx,y1+10],"spine");
-      const ts=[start-w/2].concat(between,[start+total+w/2]);
-      for(const t of ts){
-        if(horiz) addLine([t,y0-10],[t,y1+10],"branch"); else addLine([x0-10,t],[x1+10,t],"branch");}
-    } else {
-      for(const t of between){
-        if(horiz) addLine([t,y0-10],[t,y1+10],"drive"); else addLine([x0-10,t],[x1+10,t],"drive");}}}
-  return segs;}
+/* Road layouts, following the TestFit definitions:
+     internal  - drives inside the site with buildings along them, inward facing
+     perimeter - primary drives on the outer edge, buildings centralised inside
+     external  - rows of drives that run outward and terminate at the site boundary
+   Each type offers several layouts (drive counts and both directions). The
+   solver places buildings against each and keeps the one that carries most
+   load, so a circulation choice can never leave a site with roads and no
+   buildings. */
+function evenLines(base,span,n){const out=[];for(let i=1;i<=n;i++) out.push(base+span*i/(n+1));return out;}
+function layoutsFor(type,P,o,env,quickOnly){
+  const w=o.road, inner=insetPoly(P,o.setback+w/2+1);
+  const loop=[];
+  for(let i=0;i<inner.length;i++) loop.push({a:inner[i],b:inner[(i+1)%inner.length],w:w,kind:"loop"});
+  const clipTo=(clip,a,b,kind)=>{const segs=[];
+    for(const sp of clipLine(clip,a,b)) if(Math.hypot(sp[1][0]-sp[0][0],sp[1][1]-sp[0][1])>w) segs.push({a:sp[0],b:sp[1],w:w,kind:kind});
+    return segs;};
+  const xs=inner.map(p=>p[0]),ys=inner.map(p=>p[1]);
+  const ix0=Math.min(...xs),ix1=Math.max(...xs),iy0=Math.min(...ys),iy1=Math.max(...ys);
+  const px=P.map(p=>p[0]),py=P.map(p=>p[1]);
+  const bx0=Math.min(...px),bx1=Math.max(...px),by0=Math.min(...py),by1=Math.max(...py);
+  const sets=[];
+  if(type==="perimeter"){ sets.push(loop); return sets; }
+  /* strip widths worth trying: one building row per strip, or two back to back */
+  const widths=[env+w, 2*env+w];
+  for(const dir of [0,1]){
+    const horiz=dir?((ix1-ix0)<(iy1-iy0)):((ix1-ix0)>=(iy1-iy0));
+    const span=horiz?ix1-ix0:iy1-iy0, base=horiz?ix0:iy0;
+    const counts=new Set();
+    for(const sw of widths){const n=Math.floor(span/sw)-1; if(n>=0) counts.add(Math.min(n,6));}
+    counts.add(0);
+    for(const n of [...counts].sort((a,b)=>b-a)){
+      const ts=evenLines(base,span,n);
+      let segs;
+      if(type==="external"){
+        /* drives run right out to the site boundary */
+        segs=[];
+        for(const t of ts) segs=segs.concat(horiz?clipTo(P,[t,by0-20],[t,by1+20],"drive"):clipTo(P,[bx0-20,t],[bx1+20,t],"drive"));
+        if(!segs.length) continue;
+      } else {
+        const cx=(ix0+ix1)/2, cy=(iy0+iy1)/2;
+        segs=horiz?clipTo(inner,[ix0-20,cy],[ix1+20,cy],"spine"):clipTo(inner,[cx,iy0-20],[cx,iy1+20],"spine");
+        for(const t of ts) segs=segs.concat(horiz?clipTo(inner,[t,iy0-20],[t,iy1+20],"branch"):clipTo(inner,[ix0-20,t],[ix1+20,t],"branch"));
+        if(!segs.length) continue;
+      }
+      sets.push(segs);
+      if(quickOnly&&sets.length>=2) return sets;
+    }
+  }
+  if(!sets.length) sets.push(loop);
+  return sets;}
+/* A building that fronts no road gets a short access drive to the nearest one,
+   which is what fills the gaps between buildings on a perimeter layout. */
+function accessDrives(placed,roads,o,P){
+  const add=[];
+  for(const pl of placed){
+    if(pl.kind!=="bldg") continue;
+    const r=pl.r, c=[(r[0]+r[2])/2,(r[1]+r[3])/2];
+    let near=Infinity;
+    for(const s of roads.concat(add)) near=Math.min(near,rectSeg(r,s));
+    if(near<=o.road*1.6) continue;
+    let bs=null,bd=Infinity;
+    for(const s of roads.concat(add)){
+      for(let t=0;t<=1;t+=0.05){
+        const p=[s.a[0]+t*(s.b[0]-s.a[0]),s.a[1]+t*(s.b[1]-s.a[1])];
+        const d=Math.hypot(p[0]-c[0],p[1]-c[1]);
+        if(d<bd){bd=d;bs=p;}}}
+    if(!bs) continue;
+    /* stop at the building edge, not its centre */
+    const dx=c[0]-bs[0],dy=c[1]-bs[1],l=Math.hypot(dx,dy)||1;
+    const hx=(r[2]-r[0])/2,hy=(r[3]-r[1])/2;
+    const k=Math.min(Math.abs(hx/(dx/l||1e-9)),Math.abs(hy/(dy/l||1e-9)));
+    const end=[c[0]-dx/l*k,c[1]-dy/l*k];
+    if(Math.hypot(end[0]-bs[0],end[1]-bs[1])>4) add.push({a:bs,b:end,w:Math.max(6,o.road*0.8),kind:"access"});
+  }
+  return add;}
 /* distance from an axis-aligned rect to a road centreline */
 function rectSeg(r,s){
   const C=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]];
@@ -558,23 +611,22 @@ function solve(o,poly,B,coarse,hintDeg){
   const subArea=facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20;
   const pondArea=siteArea*o.pond/100, supportArea=o.supportSqm;
   const pitch=Math.max(...specs.map(s=>Math.max(s.Lm,s.H)))+2*YARD_CLEAR+o.road;
-  /* buildings line up with the site edges, so only edge-derived angles are tried */
+  const env=Math.max(...specs.map(s=>Math.min(s.Lm+2*o.road,s.H+(s.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)));
+
   const angs=new Set();
   for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];
     if(Math.hypot(b[0]-a[0],b[1]-a[1])<Math.sqrt(siteArea)*0.12) continue;
     let t=Math.atan2(b[1]-a[1],b[0]-a[0]);t=((t%(Math.PI/2))+Math.PI/2)%(Math.PI/2);
     angs.add(Math.round(t*180/Math.PI)%90);}
   if(!angs.size) angs.add(0);
-  if(coarse&&hintDeg!=null&&angs.has(hintDeg)) {angs.clear();angs.add(hintDeg);}
-  const types=o.circulation==="auto"?["internal","perimeter","external"]:(o.circulation==="infill"?[]:[o.circulation]);
+  if(coarse&&hintDeg!=null&&angs.has(hintDeg)){angs.clear();angs.add(hintDeg);}
+  let types=o.circulation==="auto"?["internal","perimeter","external"]:(o.circulation==="infill"?[]:[o.circulation]);
+  if(o.customRoads&&o.customRoads.length) types=["custom"];
   const res=[];
-  for(const deg of angs) for(const type of types){
-    const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
-    const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
-    const bb=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
-    const roads=skeleton(type,P,o,pitch);
-    if(!roads.length) continue;
-    const placed=[],step=Math.max(4,Math.sqrt(siteArea)/85)*(coarse?2.2:1);
+
+  /* one placement pass against a given road set */
+  const runPlacement=(P,bb,roads,fine)=>{
+    const placed=[],step=Math.max(4,Math.sqrt(siteArea)/85)*(fine?1:2.6);
     const free=(r,clear)=>{
       if(!rectFits(r,P,o.setback)) return false;
       for(const q of placed) if(hit(r,q.r)) return false;
@@ -583,21 +635,16 @@ function solve(o,poly,B,coarse,hintDeg){
         if(d<s.w/2+1) return false;
         if(clear!=null&&d<=s.w/2+clear) near=true;}
       return clear==null?true:near;};
-    /* spread: pick the fitting position furthest from what is already placed,
-       so buildings line the drives instead of piling into one corner */
-    const spreadScore=r=>{
-      let d=1e9;
+    const spreadScore=r=>{let d=1e9;
       for(const q of placed){const dx=Math.max(0,Math.max(q.r[0]-r[2],r[0]-q.r[2])),dy=Math.max(0,Math.max(q.r[1]-r[3],r[1]-q.r[3]));
         d=Math.min(d,Math.hypot(dx,dy));}
       return d===1e9?0:Math.min(d,pitch);};
-    /* support uses belong on remnant land at the boundary, not in the middle
-       of the site where they block a building */
     const edgeScore=r=>{const c=[(r[0]+r[2])/2,(r[1]+r[3])/2];let d=1e9;
       for(let i=0;i<P.length;i++) d=Math.min(d,segDist(c,P[i],P[(i+1)%P.length]));
       return -d;};
     const tryPlace=(w,h,kind,meta,swap,clear,mode)=>{
       let best=null,bestScore=-Infinity;
-      const st=mode==="edge"?step*1.8:step;   /* support uses are small; a coarser search is plenty */
+      const st=mode==="edge"?step*1.8:step;
       for(let y=bb[1];y<=bb[3];y+=st) for(let x=bb[0];x<=bb[2];x+=st){
         for(const [ww,hh,sw] of (swap?[[w,h,false],[h,w,true]]:[[w,h,false]])){
           const r=[x,y,x+ww,y+hh];
@@ -609,36 +656,49 @@ function solve(o,poly,B,coarse,hintDeg){
           if(mode==="spread"&&bestScore>=pitch){placed.push(best);return true;}}}
       if(best){placed.push(best);return true;}
       return false;};
-    const subS=Math.sqrt(subArea);
-    const spreadMode=coarse?false:"spread", edgeMode=coarse?false:"edge";
+    const spreadMode=fine?"spread":false, edgeMode=fine?"edge":false;
     const placeBuildings=()=>{let mw=0;const built=[],missed=[];
       for(let i=0;i<specs.length;i++){const s=specs[i];
         const padX=o.road,padTop=s.Yd>0?YARD_CLEAR:o.road,padBot=YARD_CLEAR;
         if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,o.road+4,spreadMode)){mw+=s.m;built.push(s);}
         else missed.push(s);}
       return {mw,built,missed};};
-    /* Substation first is the safe order; if that leaves buildings out, try
-       the buildings first and fit the substation into what is left. */
+    const subS=Math.sqrt(subArea);
     let subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
     let pb=placeBuildings();
-    if(!coarse&&pb.missed.length){
+    if(fine&&pb.missed.length){
       const keep=placed.splice(0);
       const pb2=placeBuildings();
       const sub2=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
       if(pb2.mw>pb.mw&&sub2){pb=pb2;subOK=sub2;}
       else {placed.splice(0);keep.forEach(q=>placed.push(q));}}
-    const mw=pb.mw,built=pb.built,missedSpecs=pb.missed;
     const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,edgeMode);
     const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,edgeMode);
-    const cov=built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
+    return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,subOK,pondOK,supOK};};
+
+  for(const deg of angs) for(const type of types){
+    const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
+    const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
+    const bb=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
+    const sets=(o.customRoads&&o.customRoads.length)
+      ? [o.customRoads.map(s2=>({a:rot(s2.a,-a),b:rot(s2.b,-a),w:s2.w,kind:"custom"}))]
+      : layoutsFor(type,P,o,env,coarse);
+    if(!sets.length) continue;
+    /* score each layout quickly, then settle the winner properly */
+    let pick=sets[0],pickMW=-1;
+    for(const roads of sets){
+      const q=runPlacement(P,bb,roads,false);
+      if(q.mw>pickMW){pickMW=q.mw;pick=roads;}
+      if(pickMW>=targetMW) break;}
+    let roads=pick;
+    const out=runPlacement(P,bb,roads,!coarse);
+    roads=roads.concat(accessDrives(out.placed,roads,o,P));
+    const cov=out.built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
     const ra=roadArea(roads),gate=gateFor(P,roads,o.frontPoint?rot(o.frontPoint,-a):null);
-    /* GRD: the building entrance faces the main gate where feasible. The envelope
-       stays put; the admin and dock columns are mirrored to the side nearest the gate. */
-    if(o.faceGate!==false&&gate) for(const pl of placed){
+    if(o.faceGate!==false&&gate) for(const pl of out.placed){
       if(pl.kind!=="bldg") continue;
       const s=pl.meta.s,r=pl.r,sw=pl.meta.swap;
-      const adminCentre=(mu,mv)=>{const u=mu?(sw?r[3]-r[1]:r[2]-r[0]):0;
-        const cu=(mu? (sw?r[3]:r[2])-s.La/2 : (sw?r[1]:r[0])+s.La/2);
+      const adminCentre=mu=>{const cu=(mu?(sw?r[3]:r[2])-s.La/2:(sw?r[1]:r[0])+s.La/2);
         const cv=(sw?r[0]:r[1])+((sw?r[2]-r[0]:r[3]-r[1])/2);
         return sw?[cv,cu]:[cu,cv];};
       let best=null,bd=1e9;
@@ -646,10 +706,10 @@ function solve(o,poly,B,coarse,hintDeg){
         const d=Math.hypot(c[0]-gate.node[0],c[1]-gate.node[1]);
         if(d<bd){bd=d;best=mu;}}
       pl.meta.mirror=best;}
-    res.push({deg,a,type,roads,placed,mw,built,missedSpecs,subOK,pondOK,supOK,cov,specs,gate,roadArea:ra,targetMW,
-      score:mw*1e6+(subOK?4e5:0)+(pondOK?2e5:0)+(supOK?1e5:0)-ra*0.4});
+    res.push({deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,
+      subOK:out.subOK,pondOK:out.pondOK,supOK:out.supOK,cov,specs,gate,roadArea:ra,targetMW,
+      score:out.mw*1e6+(out.subOK?4e5:0)+(out.pondOK?2e5:0)+(out.supOK?1e5:0)-ra*0.4});
   }
-  /* a small parcel usually cannot take a campus module: offer the infill building */
   const wantInfill=o.massing==="infill"||o.circulation==="infill"||
     (o.massing!=="modular"&&(!res.length||Math.max(0,...res.map(r=>r.mw))<targetMW*0.999));
   if(wantInfill){const inf=solveInfill(o,poly,B,siteArea,[...angs]);if(inf)res.push(inf);}
@@ -695,7 +755,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
     limit=L.length===0?"No campus-style block fits. The smallest needs about "+Math.round(n.Lm+2*o.road)+" \u00D7 "+Math.round(n.H+(n.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)+" m including yard clearances."
       :"Site caps this option at "+it+" MW of "+r.targetMW+" MW. "+((r.missedSpecs&&r.missedSpecs.length>1)?r.missedSpecs.length+" buildings ("+fmt(r.missedSpecs.reduce((t,x)=>t+x.m,0),0)+" MW) do not fit.":"A "+n.m+" MW building does not fit.");
     if(L.some(s=>s.spill>0)) limit+=" Ground-level heat rejection is taking site area.";}
-  const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access"}[r.type];
+  const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access",custom:"Your own roads"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
     rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
@@ -744,6 +804,7 @@ circulation:"How roads are generated. Internal runs a spine drive through the mi
 dockApron:"Depth of hardstanding in front of the loading dock for a truck to reverse and turn. The GRD puts two truck docks at the ground floor of the admin block, so this apron sits alongside it.",
 bandAxis:"Which way the zones inside an infill building run. Lengthwise keeps the electrical and mechanical rooms along the full length of the halls, which shortens busway runs and lets rack rows run the long way, as the GRD does. Crosswise turns them through 90 degrees: useful for testing a frontage or a phasing split, but it usually costs hall capacity. Campus layouts always run lengthwise.",
 circRow:"The circulation pattern used and the angle the blocks were rotated to.",
+editRoads:"Take over the generated road network. Drag a junction, click a dashed square to add one, or select a junction and press Delete. Buildings re-solve around whatever you draw, and Auto roads hands it back to the generator.",
 docksRow:"Truck docks across the site. The GRD provides two per facility, at the admin block ground floor with direct access to the freight lifts.",
 roadRow:"Area of service roads, gates and hardstanding. The GRD uses an 8 m two-way service road, with 4 m the absolute minimum, and keeps 15 m clear around external electrical and mechanical yards.",
 bodSelect:"Which set of design values the app is calculating with. Profiles are spreadsheets you import, so different standards or clients can each have their own.",
@@ -936,7 +997,7 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
   status("Template downloaded. Replace the values, keep the parameter names, then import it.");};
 
 /* ===== State and form ===== */
-const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null};
+const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1};
 const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
@@ -998,6 +1059,65 @@ $("massing").onchange=()=>schedule(false);
 $("bandAxis").onchange=()=>schedule(false);
 $("faceGate").onchange=()=>schedule(false);
 
+/* ----- road editing -----
+   The generated network can be taken over and reshaped: drag a junction, add
+   one on a length, or delete it. Buildings re-solve around whatever is drawn. */
+let rNodes=[],rMids=[];
+function clearRoadHandles(){[...rNodes,...rMids].forEach(m=>m.remove());rNodes=[];rMids=[];}
+function roadsFromOption(){
+  const op=state.result&&state.result.options[state.opt];
+  if(!op||!op.roads.length||!state.F) return null;
+  const nodes=[],edges=[],key=p=>p[0].toFixed(1)+","+p[1].toFixed(1);
+  const idx=new Map();
+  const add=p=>{const k=key(p);if(idx.has(k))return idx.get(k);
+    const ll=state.F.toLL(rot(p,op.a));nodes.push(ll);idx.set(k,nodes.length-1);return nodes.length-1;};
+  for(const s of op.roads){const i=add(s.a),j=add(s.b);if(i!==j)edges.push([i,j]);}
+  return {nodes,edges,w:op.roads[0].w};}
+function drawRoadHandles(){
+  clearRoadHandles();
+  if(!state.editRoads||!state.roadsLL) return;
+  const R=state.roadsLL;
+  R.nodes.forEach((p,i)=>{
+    const el=document.createElement("div");el.className="rnode"+(i===state.rsel?" sel":"");
+    el.title="Drag to move this junction. Click to select, then Delete to remove.";
+    const mk=new maplibregl.Marker({element:el,draggable:true}).setLngLat(p).addTo(map);
+    let moved=false;
+    mk.on("dragstart",()=>{moved=true;});
+    mk.on("drag",()=>{const ll=mk.getLngLat();R.nodes[i]=[ll.lng,ll.lat];schedule(true);});
+    mk.on("dragend",()=>{schedule(false);persist();setTimeout(()=>moved=false,0);});
+    el.addEventListener("click",ev=>{ev.stopPropagation();if(moved)return;
+      state.rsel=(state.rsel===i?-1:i);drawRoadHandles();});
+    rNodes.push(mk);});
+  R.edges.forEach((e,k)=>{
+    const a=R.nodes[e[0]],b=R.nodes[e[1]];
+    const el=document.createElement("div");el.className="rmid";el.title="Click to add a junction here";
+    const mk=new maplibregl.Marker({element:el}).setLngLat([(a[0]+b[0])/2,(a[1]+b[1])/2]).addTo(map);
+    el.addEventListener("click",ev=>{ev.stopPropagation();
+      R.nodes.push([(a[0]+b[0])/2,(a[1]+b[1])/2]);
+      const n=R.nodes.length-1;R.edges.splice(k,1,[e[0],n],[n,e[1]]);
+      state.rsel=n;drawRoadHandles();schedule(false);persist();});
+    rMids.push(mk);});}
+function deleteRoadNode(){
+  const R=state.roadsLL;if(!R||state.rsel<0)return;
+  const i=state.rsel;
+  R.edges=R.edges.filter(e=>e[0]!==i&&e[1]!==i).map(e=>[e[0]>i?e[0]-1:e[0],e[1]>i?e[1]-1:e[1]]);
+  R.nodes.splice(i,1);state.rsel=-1;
+  if(!R.edges.length){state.roadsLL=null;state.editRoads=false;$("btnRoads").setAttribute("aria-pressed","false");$("btnRoadsReset").hidden=true;status("Roads back to automatic.");}
+  drawRoadHandles();schedule(false);persist();}
+$("btnRoads").onclick=()=>{
+  if(!state.editRoads){
+    if(!state.roadsLL) state.roadsLL=roadsFromOption();
+    if(!state.roadsLL){status("Generate a layout first, then edit its roads.");return;}
+    state.editRoads=true;$("btnRoads").setAttribute("aria-pressed","true");$("btnRoads").textContent="Done";
+    $("btnRoadsReset").hidden=false;
+    status("Drag a junction, click a dashed square to add one, or select and press Delete.");
+    schedule(false);
+  } else {state.editRoads=false;state.rsel=-1;$("btnRoads").setAttribute("aria-pressed","false");$("btnRoads").textContent="Edit roads";}
+  drawRoadHandles();};
+$("btnRoadsReset").onclick=()=>{state.roadsLL=null;state.editRoads=false;state.rsel=-1;
+  $("btnRoads").setAttribute("aria-pressed","false");$("btnRoads").textContent="Edit roads";$("btnRoadsReset").hidden=true;
+  clearRoadHandles();status("Roads back to automatic.");schedule(false);persist();};
+
 /* ----- building mix ----- */
 const DSHORT={ent:"Enterprise",ai60:"AI 60 kW",ai130:"AI 130 kW",ai200:"AI 200 kW"};
 function drawMix(){
@@ -1025,7 +1145,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
-    massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,frontLL:state.frontLL,
+    massing:$("massing").value,faceGate:$("faceGate").checked,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,
     mix:state.mix.length?state.mix.slice():null,supportSqm:B.profile[state.profile].supportSqm||2000};}
 
 /* ===== Map ===== */
@@ -1100,7 +1220,9 @@ function updateSiteSource(){const src=map.getSource("site");if(!src)return;
   src.setData({type:"Feature",geometry:R.length>=3?{type:"Polygon",coordinates:[coords]}:{type:"LineString",coordinates:coords}});}
 
 $("btnRemove").onclick=removeSelected;
-document.addEventListener("keydown",e=>{if((e.key==="Delete"||e.key==="Backspace")&&state.sel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();removeSelected();}
+document.addEventListener("keydown",e=>{
+  if((e.key==="Delete"||e.key==="Backspace")&&state.editRoads&&state.rsel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();deleteRoadNode();return;}
+  if((e.key==="Delete"||e.key==="Backspace")&&state.sel>=0&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();removeSelected();}
   if(e.key==="Escape"&&state.drawing) stopDraw(false);});
 function removeSelected(){if(state.sel<0||state.ring.length<=3)return;state.ring.splice(state.sel,1);state.sel=-1;$("btnRemove").disabled=true;buildHandles();schedule(false);persist();}
 
@@ -1185,6 +1307,9 @@ function runSolve(coarse){
   const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=activeBOD();
   o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
+  o.customRoads=(o.roadsLL&&o.roadsLL.edges.length)
+    ? o.roadsLL.edges.map(e=>({a:F.toM(o.roadsLL.nodes[e[0]]),b:F.toM(o.roadsLL.nodes[e[1]]),w:o.roadsLL.w||o.road}))
+    : null;
   const res=solve(o,poly,B,coarse,state.lastDeg);
   if(!res.options.length) return;
   state.result=res;state.F=F;state.o=o;
@@ -1309,6 +1434,7 @@ function renderLayout(){
   const dsrc=map.getSource("detail");
   if(dsrc) dsrc.setData(buildDetail(op,o,activeBOD()));
   state.layoutGeo=feats;state.pendingLayout=!src;
+  if(state.editRoads) drawRoadHandles();
   /* boundary dimensions */
   if(state.ring.length>2){const Fm=state.F;
     const pts=state.ring.map(Fm.toM);
@@ -1375,11 +1501,13 @@ $("btnPNG").onclick=()=>{if(!state.result)return;
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
-  return {app:"dccg",v:5,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:6,roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
-  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";state.frontLL=p.frontLL||null;
+  $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";state.frontLL=p.frontLL||null;state.roadsLL=p.roadsLL||null;
+  state.editRoads=false;state.rsel=-1;$("btnRoads").textContent="Edit roads";$("btnRoads").setAttribute("aria-pressed","false");
+  $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
   $("faceGate").checked=p.faceGate!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
