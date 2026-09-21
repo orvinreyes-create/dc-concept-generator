@@ -1426,7 +1426,7 @@ map.on("load",()=>{
   map.addSource("layout",{type:"geojson",data:EMPTY});
   map.addSource("site",{type:"geojson",data:EMPTY});
   map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":1}});
-  map.addLayer({id:"layout-fill",type:"fill",source:"layout",paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":1}});
+  map.addLayer({id:"layout-fill",type:"fill",source:"layout",filter:["==",["geometry-type"],"Polygon"],paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":1}});
   map.addLayer({id:"layout-line",type:"line",source:"layout",filter:["!",["in",["get","kind"],["literal",["roofhr","fence","clearzone"]]]],paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
   map.addLayer({id:"roof-line",type:"line",source:"layout",filter:["==",["get","kind"],"roofhr"],
     paint:{"line-color":"#1F5F99","line-width":1.6,"line-dasharray":[2.5,1.5]}});
