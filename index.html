@@ -836,7 +836,7 @@ function solve(o,poly,B,coarse,hintDeg){
   const rank=q=>(q.subOK?1e9:0)+q.mw*1e6+(q.supOK?2e5:0)+(q.pondOK?1e5:0)-q.ra*0.4;
   const finish=(deg,a,type,P,bb,base,out)=>{
     const roads=base.concat(accessDrives(out.placed,base,o,P));
-    const cov=out.built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
+    const cov=out.built.reduce((t,s)=>t+s.foot+s.adminFoot+s.ecFoot,0)/siteArea*100;
     const ra=roadArea(roads),gate=gateFor(P,roads,o.frontPoint?rot(o.frontPoint,-a):null);
     /* Phase order: buildings are numbered outward from the gate, so B1 is the
        first phase off the entry and the numbering matches a staged build-out. */
@@ -947,7 +947,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
       ["Admin gross floor area",fmt(infill?sum(s=>s.adminGfa||0):L.length*B.elec[o.elec].admin,0)+" sqm","adminGfa"],
       ["Truck docks",fmt(L.length*2,0)+" ("+fmt(L.length,0)+" × 2)","docksRow"],
       ["Typical floor plate",infill?fmt(L[0].foot,0)+" sqm ("+fmt(L[0].W,0)+" \u00D7 "+fmt(L[0].D,0)+" m)":"\u2014","plateRow"],
-      ["Building footprint",fmt(sum(s=>s.foot+s.adminFoot),0)+" sqm","footprint"],
+      ["Building footprint",fmt(sum(s=>s.foot+s.adminFoot+(infill?0:s.ecFoot)),0)+" sqm","footprint"],
       ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",storeysUsed+" / "+fmt(maxHt,1)+" m","storeysRow"],
       ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm"+(L.length&&L[0].ecLevels>1?" on "+L[0].ecLevels+" levels":""),"ecFoot"],
       ["Heat rejection on roof (chiller deck)",fmt(sum(s=>s.roofHR),0)+" of "+fmt(sum(s=>s.roofCap||0),0)+" sqm usable","roofHR"],
@@ -1019,7 +1019,7 @@ densityRow:"Power per rack used in this calculation.",
 hallArea:"Floor area of the data halls themselves, excluding plant, offices and circulation.",
 gfa:"Total floor area of the data buildings across all storeys, including halls, electrical rooms and circulation.",
 adminGfa:"Floor area of the administration and support block, which holds offices, security and welfare areas.",
-footprint:"Ground area covered by buildings. This is what the coverage limit applies to.",
+footprint:"Ground area covered by structures: data halls, admin blocks and the energy centre gantries. Loading aprons, roads, yards and the substation are open ground and are not counted. This is what the coverage limit applies to.",
 coverageRow:"Building footprint as a share of the site. Compare it with the zoning limit you entered.",
 storeysRow:"Number of floors and the resulting building height, including rooftop plant. Compare it with the height limit.",
 ecFoot:"Ground area of the energy centre gantry, which houses transformers, switchgear, UPS and generators. The GRD gantry stacks plant on every floor of the building, so its footprint is the total area divided by the number of levels. It grows under EMOD and shrinks under EROOM.",
@@ -1566,6 +1566,8 @@ function runSolve(coarse,optimise){
   state.lastDeg=res.options[state.opt].deg;
   renderLayout();renderLive(coarse);if(!coarse)renderSpec();
 }
+/* with a building mix set, the target is the mix total, not the target field */
+function targetOf(o){return (o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;}
 function renderEmpty(){if(map.getSource("layout"))map.getSource("layout").setData(EMPTY);clearLabels();
   $("live").innerHTML='<small>Draw a site or import a boundary to start.</small>';}
 
@@ -1717,7 +1719,7 @@ function renderLayout(){
     labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(op.gate.edge[0],op.gate.edge[1])).addTo(map));}
 }
 function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
-  $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${o.targetMW}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${fmt(op.cov,0)}%</b><small>coverage</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
+  $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${fmt(targetOf(o),0)}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${fmt(op.cov,0)}%</b><small>coverage</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
   <div class="lim">${coarse?"Updating… ":""}${esc(op.limit)}${op.flags.length?` <span style="color:var(--bad)">${op.flags.length} flag${op.flags.length>1?"s":""}</span>`:""}</div>`;}
 function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activeBOD(),n=state.result.options.length;
   $("results").innerHTML=`<h2>Spec sheet, option ${String.fromCharCode(65+state.opt)} of ${n}</h2>
@@ -1759,7 +1761,7 @@ $("btnPNG").onclick=()=>{if(!state.result)return;
     g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);
     try{g.drawImage(mc,0,0);}catch(e){}
     const d=devicePixelRatio;g.fillStyle="#1D2B36";g.font=`600 ${22*d}px Barlow Condensed, Arial`;
-    g.fillText(`${$("projName").value||"DC concept"}: ${fmt(op.it,0)} MW IT of ${o.targetMW}, ${fmt(op.fac,1)} MW facility, ${fmt(op.cov,0)}% coverage`,14*d,mc.height+34*d);
+    g.fillText(`${$("projName").value||"DC concept"}: ${fmt(op.it,0)} MW IT of ${fmt(targetOf(o),0)}, ${fmt(op.fac,1)} MW facility, ${fmt(op.cov,0)}% coverage`,14*d,mc.height+34*d);
     g.font=`${15*d}px Barlow, Arial`;g.fillText(op.limit,14*d,mc.height+60*d);
     g.fillStyle="#5E6B75";g.fillText(`${DLABEL[o.density]}, ${o.elec}, ${activeBOD().name}. ${state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors"}. Concept only.`,14*d,mc.height+86*d);
     try{c.toBlob(b=>download(base()+".png",b),"image/png");}catch(e){status("The map layer blocked image export. Try the street map.");}
@@ -1846,7 +1848,7 @@ function onePagerData(){
   const ph=(op.phases&&op.phases.length?op.phases:op.built.map(s=>({s}))).map((p,i)=>"B"+(i+1)+" "+fmt(p.s.m,0)+" MW");
   return {title:$("projName").value.trim()||"Data centre concept",
     sub:(o.profile==="metro"?"Metro":"Campus")+" · "+DLABEL[o.density]+" · "+o.elec+" · option "+String.fromCharCode(65+state.opt),
-    headline:[[fmt(op.it,0)+" MW","IT load (target "+o.targetMW+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
+    headline:[[fmt(op.it,0)+" MW","IT load (target "+fmt(targetOf(o),0)+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
     spec,phases:ph.join("  ·  "),dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]),
     limit:op.limit,flags:op.flags.slice(0,2),bod:B.name,placeholder:!!B.placeholder,
     date:new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"}),
