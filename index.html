@@ -610,7 +610,7 @@ function solveInfill(o,poly,B,siteArea,angles){
                   [m[0]+ux*half+nx*depth,m[1]+uy*half+ny*depth],[m[0]-ux*half+nx*depth,m[1]-uy*half+ny*depth]]:null;
   const dockC=[m[0]+nx*depth*0.5,m[1]+ny*depth*0.5];
   const spec={m:mw,dens:dens,kw:d.kw,racks:racks,hall:hall,gross:totalGfa,foot:F,adminFoot:0,
-    ecFoot:ec,adminGfa:admin,roofHR:Math.min(hrNeed,roofCap),spill:Math.max(0,hrNeed-roofCap),
+    ecFoot:ec,adminGfa:admin,roofHR:Math.min(hrNeed,roofCap),roofCap,spill:Math.max(0,hrNeed-roofCap),
     liquid:d.liquid,rackKg:d.rackKg,pue:B.pue[o.profile][dens],height:height,
     storeys:storeys,plantFloors:plantFloors,infill:true,hallDepth:hallDepth,bandAxis:(o.bandAxis||"auto"),
     typicalHall:F-(admin+ec+crit)/storeys,
@@ -947,6 +947,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
     if(s0.hallDepth&&s0.hallDepth<12) flags.push("The ground-floor hall band is only "+fmt(s0.hallDepth,0)+" m deep, which takes "+Math.floor(s0.hallDepth/6)+" rack row at the GRD's 6 m pitch. Try the other zone band direction.");
     if(s0.apronShort) flags.push("Only "+fmt(s0.apronDepth,0)+" m of yard is available between the street and the building, short of a "+o.dockApron+" m apron, so the dock and ramp are shown inside the footprint as urban designs normally do.");
     flags.push("Stormwater retention and parking are not laid out in infill mode. Assume underground tanks and parking inside the building or off site.");
+    { const left=siteArea-L[0].foot; flags.push("The substation ("+fmt(subArea,0)+" sqm) is not laid out in infill mode. "+(left>=subArea*1.3?"About "+fmt(left,0)+" sqm of the plot is left outside the building, which may hold it.":"Only about "+fmt(Math.max(0,left),0)+" sqm of the plot is left outside the building, so the substation would have to go off site or inside the building."));}
     if(s0.spill>0) flags.push("Heat rejection needs "+fmt(s0.spill,0)+" sqm more than the roof holds, so a plant floor is allowed for. Confirm with the mechanical engineer.");}
   if(r.cov>o.maxCov) flags.push("Coverage "+r.cov.toFixed(0)+"% exceeds the "+o.maxCov+"% limit.");
   if(heavy.length) flags.push(heavy.length+" building"+(heavy.length>1?"s":"")+" exceed the "+B.rackKgLimit+" kg floor loading basis. Upper floors need structural review.");
