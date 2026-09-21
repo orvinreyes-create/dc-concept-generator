@@ -871,6 +871,11 @@ function solve(o,poly,B,coarse,hintDeg){
       ? [o.customRoads.map(s2=>({a:rot(s2.a,-a),b:rot(s2.b,-a),w:s2.w,kind:"custom"}))]
       : layoutsFor(type,P,o,env,coarse);
     if(!sets.length) continue;
+    /* the drive from the street gate to the network is part of the road set
+       before anything is placed, so no building can sit across it */
+    const fpR=o.frontPoint?rot(o.frontPoint,-a):null;
+    for(let k=0;k<sets.length;k++){const g=gateFor(P,sets[k],fpR);
+      if(g&&Math.hypot(g.node[0]-g.edge[0],g.node[1]-g.edge[1])>1) sets[k]=sets[k].concat([{a:g.node,b:g.edge,w:o.road,kind:"gate"}]);}
     /* score each layout quickly, then settle the winner properly */
     let pick=sets[0],pickS=-Infinity;
     for(const roads of sets){
