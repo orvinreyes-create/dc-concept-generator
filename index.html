@@ -844,8 +844,11 @@ function solve(o,poly,B,coarse,hintDeg){
     const org=gate?gate.node:[(bb[0]+bb[2])/2,bb[1]];
     bl.forEach(p=>{p.meta.gd=Math.hypot((p.r[0]+p.r[2])/2-org[0],(p.r[1]+p.r[3])/2-org[1]);});
     bl.sort((x,y)=>x.meta.gd-y.meta.gd);
-    bl.forEach((p,k)=>{p.meta.i=k;});
-    const phases=bl.map(p=>({s:p.meta.s,pinned:!!p.meta.pinned}));
+    /* With a building mix, the user's B-numbers stand and the phase order
+       is shown alongside; otherwise buildings are numbered in phase order. */
+    const keepNames=!!(o.mix&&o.mix.length);
+    bl.forEach((p,k)=>{if(p.meta.si===undefined)p.meta.si=p.meta.i;p.meta.i=keepNames?p.meta.si:k;});
+    const phases=bl.map(p=>({s:p.meta.s,pinned:!!p.meta.pinned,name:"B"+(p.meta.i+1)}));
     if(o.faceGate!==false&&gate) for(const pl of out.placed){
       if(pl.kind!=="bldg") continue;
       const s=pl.meta.s,r=pl.r,sw=pl.meta.swap;
@@ -1728,9 +1731,9 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   ${state.closure>1?`<p class="flag">Title courses do not close by ${fmt(state.closure,2)} m.</p>`:""}
   <div class="limit">${esc(op.limit)}</div>${op.flags.map(f=>`<p class="flag">${esc(f)}</p>`).join("")}
   ${op.built.length?(()=>{const ph=(op.phases&&op.phases.length)?op.phases:op.built.map(s=>({s,pinned:false}));let cum=0;
-    return `<h2>Buildings, in phase order</h2><p class="hint">B1 is nearest the gate, so the numbering follows a staged build-out outward along the drives.</p>
+    return `<h2>Buildings, in phase order</h2><p class="hint">${(op.phases||[]).some((p,i)=>p.name&&p.name!=="B"+(i+1))?"Your building numbers are kept; phases run outward from the gate.":"B1 is nearest the gate, so the numbering follows a staged build-out outward along the drives."}</p>
     <table><tr><th>Phase</th><th>Capacity</th><th>Cumulative</th></tr>${ph.map((p,i)=>{cum+=p.s.m;
-      return `<tr><td>B${i+1} ${DSHORT[p.s.dens]}${p.pinned?' <span title="Pinned by you">\u{1F4CD}</span>':""}</td><td>${fmt(p.s.m,0)} MW &middot; ${fmt(p.s.racks,0)} racks &middot; ${fmt(p.s.hall,0)} sqm hall</td><td>${fmt(cum,0)} MW</td></tr>`;}).join("")}</table><h2>Totals</h2>`;})():""}
+      return `<tr><td>${p.name&&p.name!=="B"+(i+1)?"Phase "+(i+1)+": "+p.name:"B"+(i+1)} ${DSHORT[p.s.dens]}${p.pinned?' <span title="Pinned by you">\u{1F4CD}</span>':""}</td><td>${fmt(p.s.m,0)} MW &middot; ${fmt(p.s.racks,0)} racks &middot; ${fmt(p.s.hall,0)} sqm hall</td><td>${fmt(cum,0)} MW</td></tr>`;}).join("")}</table><h2>Totals</h2>`;})():""}
   <table>${op.rows.map(r=>`<tr><td>${r[0]}${r[2]&&TIP[r[2]]?`<button type="button" class="info" data-tip="${r[2]}" aria-label="What does ${esc(r[0])} mean?">i</button>`:""}</td><td>${r[1]}</td></tr>`).join("")}</table>
   <p class="hint">${esc(op.grid)}</p>
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
@@ -1845,7 +1848,7 @@ function onePagerData(){
   const want=["siteArea","circRow","itLoad","facLoad","racks","gfa","coverageRow","storeysRow","ecFoot","roofHR","yardHR","gensRow","fuelRow","subRow"];
   const by={};op.rows.forEach(r=>{if(r[2]&&!by[r[2]])by[r[2]]=r;});
   const spec=want.filter(k=>by[k]&&!(k==="yardHR"&&/^0 /.test(String(by[k][1])))).map(k=>[by[k][0],String(by[k][1])]);
-  const ph=(op.phases&&op.phases.length?op.phases:op.built.map(s=>({s}))).map((p,i)=>"B"+(i+1)+" "+fmt(p.s.m,0)+" MW");
+  const ph=(op.phases&&op.phases.length?op.phases:op.built.map(s=>({s}))).map((p,i)=>(p.name||"B"+(i+1))+" "+fmt(p.s.m,0)+" MW");
   return {title:$("projName").value.trim()||"Data centre concept",
     sub:(o.profile==="metro"?"Metro":"Campus")+" · "+DLABEL[o.density]+" · "+o.elec+" · option "+String.fromCharCode(65+state.opt),
     headline:[[fmt(op.it,0)+" MW","IT load (target "+fmt(targetOf(o),0)+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
