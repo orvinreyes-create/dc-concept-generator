@@ -226,7 +226,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     </div>
     <div class="row">
       <div><label for="roofTiers">Chiller deck tiers</label><input id="roofTiers" type="number" min="1" max="2" step="1"></div>
-      <div></div>
+      <div><label for="yardClear">Yard clearance (m)</label><input id="yardClear" type="number" min="0" step="1"></div>
     </div>
     <p class="hint">These override the profile for this site only. Use Export profile to keep them.</p>
   </details>
@@ -641,7 +641,7 @@ function solve(o,poly,B,coarse,hintDeg){
       const r=solve(Object.assign({},o,{bldgMax:bm,_split:true}),poly,B,coarse,hintDeg);
       if(!out||r.best>out.best) out=r;}
     return out;}
-  YARD_CLEAR=(B.yardClear>0?B.yardClear:15);
+  YARD_CLEAR=(o.yardClear>0?o.yardClear:(B.yardClear>0?B.yardClear:15));
   if(polyArea(poly)<0) poly=poly.slice().reverse();
   const siteArea=Math.abs(polyArea(poly));
   const mix=(o.mix&&o.mix.length)?o.mix:null;
@@ -1021,6 +1021,7 @@ circulation:"How roads are generated. Internal runs a spine drive through the mi
 padInSetback:"When on, only the structures themselves (data buildings, energy centres, substation, retention) must stay behind the setback line. Their road and yard clearances, the internal roads and the parking may use the setback band, as driveways and open hardstanding usually can. Turn off for the strictest reading, where everything stays behind the line.",
 fenceInset:"How far inside the property line the security fence runs. 0 puts it on the boundary.",
 clearZone:"A band inside the fence kept clear of everything except the gate drive, so the fence can be watched and patrolled.",
+yardClear:"Clear distance kept around each building\u2019s external electrical and mechanical yards, which also sets the gap between neighbouring buildings\u2019 plant sides. The GRD uses 15 m; a smaller figure packs buildings closer but needs fire-engineering and maintenance-access sign-off.",
 roofTiers:"Levels of the roof chiller deck. 1 is the GRD baseline (air-cooled chillers on one gantry level). 2 is the BOD\u2019s stacked option, with water-cooled chillers and dry air coolers on two roof levels (R2 and R3), which roughly doubles the heat rejection the roof can carry and adds about 6 m of height.",
 supportSqm:"Ground area for staff and visitor parking, laydown and support yards. Set 0 if parking goes inside the buildings or off site. It may be placed as one yard or split into two.",
 subSqm:"Plot area for the utility substation. 0 sizes it automatically from the facility load, assuming an air-insulated substation. A compact gas-insulated (GIS) substation needs far less land; enter its area to test it, and confirm with the utility.",
@@ -1241,16 +1242,16 @@ $("bodTemplate").onclick=()=>{const t=JSON.parse(JSON.stringify(PLACEHOLDER));de
 
 /* ===== State and form ===== */
 const state={profile:"metro",elec:"EROOM",density:"ent",ring:[],sel:-1,drawing:false,draft:[],opt:0,result:null,lastDeg:null,base:"osm",mix:[],frontLL:null,roadsLL:null,editRoads:false,rsel:-1,pins:[],pinning:false,psel:-1};
-const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","fenceInset","clearZone","roofTiers"];
+const NUM=["targetMW","kw","setback","maxH","maxCov","storeys","sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","fenceInset","clearZone","roofTiers","yardClear"];
 function applyDefaults(){const B=activeBOD(),P=B.profile[state.profile];
   const s=(id,v)=>$(id).value=v;
-  s("dockApron",B.dockApron||30);s("supportSqm",P.supportSqm!=null?P.supportSqm:2000);s("subSqm",B.subSqm||0);s("subMargin",B.subMargin>=0?B.subMargin:8);s("fenceInset",B.fenceInset>=0?B.fenceInset:0);s("clearZone",B.clearZone>=0?B.clearZone:3);s("roofTiers",B.roofTiers>=1?B.roofTiers:1);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
+  s("dockApron",B.dockApron||30);s("supportSqm",P.supportSqm!=null?P.supportSqm:2000);s("subSqm",B.subSqm||0);s("subMargin",B.subMargin>=0?B.subMargin:8);s("fenceInset",B.fenceInset>=0?B.fenceInset:0);s("clearZone",B.clearZone>=0?B.clearZone:3);s("roofTiers",B.roofTiers>=1?B.roofTiers:1);s("yardClear",B.yardClear>0?B.yardClear:15);s("targetMW",P.targetMW);s("setback",P.setback);s("maxH",P.maxH);s("maxCov",P.maxCov);s("storeys",P.storeys);s("bldgMax",P.bldgMax);s("pondPct",P.pond);s("roadW",P.road);
   applyDensity();}
 /* Put one group of fields back to the values in the active basis of design. */
 const RESET_GROUPS={
   profile:["targetMW","kw"],
   rules:["setback","maxH","maxCov","storeys","fenceInset","clearZone"],
-  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","roofTiers"]
+  values:["sqmRack","pue","liquid","rackKg","hrPerMW","bldgMax","pondPct","roadW","dockApron","supportSqm","subSqm","subMargin","roofTiers","yardClear"]
 };
 function profileValue(id){
   const B=activeBOD(),P=B.profile[state.profile],D=B.density[state.density];
@@ -1270,6 +1271,7 @@ function profileValue(id){
     case "fenceInset": return B.fenceInset>=0?B.fenceInset:0;
     case "clearZone": return B.clearZone>=0?B.clearZone:3;
     case "roofTiers": return B.roofTiers>=1?B.roofTiers:1;
+    case "yardClear": return B.yardClear>0?B.yardClear:15;
     case "kw": return D.kw;
     case "sqmRack": return D.sqmRack;
     case "liquid": return D.liquid;
@@ -1433,7 +1435,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
     massing:$("massing").value,faceGate:$("faceGate").checked,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
-    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1)))};}
+    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear")};}
 
 /* ===== Map ===== */
 const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,preserveDrawingBuffer:true,attributionControl:{compact:true},
