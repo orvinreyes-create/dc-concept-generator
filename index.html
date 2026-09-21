@@ -558,7 +558,9 @@ function solveInfill(o,poly,B,siteArea,angles){
     storeys++;
   }
   if(!bands) return null;
-  const hrNeed=d.hr*mw, roofCap=F*0.85;
+  /* the chiller deck sits over the data halls only, as in the GRD */
+  const roofShare=(B.roofShare>0&&B.roofShare<=1.5)?B.roofShare:0.9;
+  const hrNeed=d.hr*mw, roofCap=bands.hall*roofShare;
   const plantFloors=Math.max(0,Math.ceil((hrNeed-roofCap)/F));
   const height=(storeys+plantFloors)*B.floorM+B.roofPlantM+1.5;
   const zones=[];
@@ -979,7 +981,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
       ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",storeysUsed+" / "+fmt(maxHt,1)+" m","storeysRow"],
       ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm"+(L.length&&L[0].ecLevels>1?" on "+L[0].ecLevels+" levels":""),"ecFoot"],
       ["Heat rejection on roof (chiller deck)",fmt(sum(s=>s.roofHR),0)+" of "+fmt(sum(s=>s.roofCap||0),0)+" sqm usable","roofHR"],
-      ["Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm","yardHR"],
+      [infill?"Heat rejection on plant floor":"Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm","yardHR"],
       ["Heat to liquid",fmt(liquidMW,1)+" MW","liquidRow"],
       ["CDUs (2 MW, N+1 per building)",fmt(cdus,0),"cdus"],["ITE power streams",fmt(streams,0),"streams"],
       ["Generators ("+fmt(B.genKVA,0)+" kVA, incl. house)",fmt(gens,0),"gensRow"],
@@ -1727,11 +1729,12 @@ function renderLayout(){
     const rc=op.rect,el=document.createElement("div");el.className="lbl";
     /* roof chiller deck over the building, drawn from the end away from the
        dock, sized to the heat rejection the roof carries */
-    if(b0.roofHR>0){const W=rc[2]-rc[0],H=rc[3]-rc[1],f=Math.min(1,b0.roofHR/Math.max(1,W*H)),ins=Math.min(3,Math.min(W,H)*0.03);
-      const dz=op.zones.find(z=>z.kind==="apron")||op.zones[0],dc=dz?[(dz.r[0]+dz.r[2])/2,(dz.r[1]+dz.r[3])/2]:[rc[0],rc[1]];
+    const hz=op.zones.find(z=>z.kind==="hall");
+    if(b0.roofHR>0&&hz){const h=hz.r,W=h[2]-h[0],H=h[3]-h[1],f=Math.min(1,b0.roofHR/Math.max(1,W*H)),ins=Math.min(2.5,Math.min(W,H)*0.04);
+      const dz=op.zones.find(z=>z.kind==="apron")||op.zones[0],dc=dz?[(dz.r[0]+dz.r[2])/2,(dz.r[1]+dz.r[3])/2]:[h[0],h[1]];
       let r;
-      if(W>=H){const len=W*f;r=dc[0]<(rc[0]+rc[2])/2?[rc[2]-len+ins,rc[1]+ins,rc[2]-ins,rc[3]-ins]:[rc[0]+ins,rc[1]+ins,rc[0]+len-ins,rc[3]-ins];}
-      else{const len=H*f;r=dc[1]<(rc[1]+rc[3])/2?[rc[0]+ins,rc[3]-len+ins,rc[2]-ins,rc[3]-ins]:[rc[0]+ins,rc[1]+ins,rc[2]-ins,rc[1]+len-ins];}
+      if(W>=H){const len=W*f;r=dc[0]<(h[0]+h[2])/2?[h[2]-len+ins,h[1]+ins,h[2]-ins,h[3]-ins]:[h[0]+ins,h[1]+ins,h[0]+len-ins,h[3]-ins];}
+      else{const len=H*f;r=dc[1]<(h[1]+h[3])/2?[h[0]+ins,h[3]-len+ins,h[2]-ins,h[3]-ins]:[h[0]+ins,h[1]+ins,h[2]-ins,h[1]+len-ins];}
       box(r,"roofhr",null);}
     el.innerHTML="B1 "+fmt(b0.m,0)+" MW \u00B7 "+DSHORT[b0.dens]+"<br><span style='font-weight:400;opacity:.8'>"
       +b0.storeys+" floors \u00B7 "+fmt(b0.gross,0)+" sqm GFA"+(b0.roofHR>0?" \u00B7 roof chillers "+fmt(b0.roofHR,0)+" sqm":"")+"</span>";
