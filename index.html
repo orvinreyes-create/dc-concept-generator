@@ -244,6 +244,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnPin" type="button" aria-pressed="false">Pin building</button>
     <button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button>
     <button class="btn" id="btnBase" type="button">Satellite</button>
+    <button class="btn" id="btnOpt" type="button" title="Search harder: every building order, packing style and road frontage, for up to 8 seconds">Optimise</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
     <span class="opmenu"><button class="btn" id="btnOne" type="button" aria-haspopup="true" aria-expanded="false">One-pager</button>
       <span class="opmenu-list" id="oneMenu" hidden><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button></span></span>
@@ -409,7 +410,7 @@ function layoutsFor(type,P,o,env,quickOnly){
 function accessDrives(placed,roads,o,P){
   const add=[];
   for(const pl of placed){
-    if(pl.kind!=="bldg") continue;
+    if(pl.kind!=="bldg"&&pl.kind!=="sub"&&pl.kind!=="support") continue;
     const r=pl.r, c=[(r[0]+r[2])/2,(r[1]+r[3])/2];
     let near=Infinity;
     for(const s of roads.concat(add)) near=Math.min(near,rectSeg(r,s));
@@ -608,7 +609,7 @@ function solveInfill(o,poly,B,siteArea,angles){
   return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,dock:dockQuad,roads:roads,placed:[],
     mw:mw,built:[spec],specs:[spec],subOK:true,pondOK:true,supOK:true,cov:F/siteArea*100,storeys:storeys+plantFloors,
     gate:{edge:[m[0],m[1]],node:dockC,w:6},roadArea:roads.reduce((t,x)=>t+segLen(x)*x.w,0),targetMW:mw,
-    score:mw*1e6-1e3};}
+    score:1e9+mw*1e6-1e3};}
 
 function solve(o,poly,B,coarse,hintDeg){
   YARD_CLEAR=(B.yardClear>0?B.yardClear:15);
@@ -638,8 +639,8 @@ function solve(o,poly,B,coarse,hintDeg){
   const res=[];
 
   /* one placement pass against a given road set */
-  const runPlacement=(P,bb,roads,fine,a)=>{
-    const placed=[],step=Math.max(4,Math.sqrt(siteArea)/85)*(fine?1:2.6);
+  const runPlacement=(P,bb,roads,fine,a,deep)=>{
+    const step0=Math.max(4,Math.sqrt(siteArea)/85);let step=step0*(fine?1:2.6);const placed=[];
     /* Two neighbouring buildings share the clearance between them (one road
        or one yard gap), so building-to-building checks use envelopes shrunk
        by half their pads; everything else keeps the full envelope. */
@@ -665,7 +666,7 @@ function solve(o,poly,B,coarse,hintDeg){
       return -d;};
     const tryPlace=(w,h,kind,meta,swap,clear,mode)=>{
       let best=null,bestScore=-Infinity;
-      const st=mode==="edge"?step*1.8:step;
+      const st=mode==="edge"&&kind!=="bldg"?step*1.8:step;
       for(let y=bb[1];y<=bb[3];y+=st) for(let x=bb[0];x<=bb[2];x+=st){
         for(const [ww,hh,sw] of (swap?[[w,h,false],[h,w,true]]:[[w,h,false]])){
           const r=[x,y,x+ww,y+hh];
@@ -678,6 +679,23 @@ function solve(o,poly,B,coarse,hintDeg){
       if(best){placed.push(best);return true;}
       return false;};
     const spreadMode=fine?"spread":false, edgeMode=fine?"edge":false;
+    /* Ancillary plots are an area, not a fixed shape: try squat to long
+       rectangles, first beside a road, then anywhere (a spur drive is added
+       afterwards). Parking may also split into two yards. */
+    const placeFlex=(area,kind,clear,margin,minSide,aspects)=>{
+      if(area<1) return true;
+      for(const c of (clear==null?[null]:[clear,null]))
+        for(const as of aspects){const a0=Math.sqrt(area*as),b0=area/a0;
+          if(Math.min(a0,b0)<minSide) continue;
+          if(tryPlace(a0+margin,b0+margin,kind,{area},as!==1,c,edgeMode)) return true;}
+      return false;};
+    const placeSub=()=>placeFlex(subArea,"sub",YARD_CLEAR+o.road,8,35,[1,1.5,2,2.5]);
+    const placeSupport=()=>{
+      if(placeFlex(supportArea,"support",o.road+6,0,16,[2,3,4,1.5,6])) return true;
+      const n0=placed.length,h=supportArea/2;
+      if(placeFlex(h,"support",o.road+6,0,16,[2,3,4,1.5,6])&&placeFlex(h,"support",o.road+6,0,16,[2,3,4,1.5,6])) return true;
+      placed.splice(n0);return false;};
+    const placePond=()=>placeFlex(pondArea,"pond",null,0,10,[1.6,1,2.5,4]);
     /* A pinned building is the user's decision, not the solver's: it is dropped
        on the point they chose (nudged only as far as it takes to clear the
        boundary and its neighbours) and everything else fills in around it. */
@@ -711,44 +729,52 @@ function solve(o,poly,B,coarse,hintDeg){
         if(tryPlace(s.Lm+2*padX,s.H+padTop+padBot,"bldg",{i,s,padX,padTop,padBot},true,loose?null:o.road+4,mode===undefined?spreadMode:mode)){mw+=s.m;built.push(s);}
         else missed.push(s);}
       return {mw,built,missed,pinsPlaced};};
-    const subS=Math.sqrt(subArea);
-    let subOK=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
-    let pb=placeBuildings();
-    if(fine&&pb.missed.length){
+    /* One pass = substation, buildings, parking, retention in a given order
+       and placement style. Score every pass the same way the options are
+       ranked, and keep the best: load first, then the substation, parking and
+       retention all fitting. */
+    const scoreOf=q=>(q.subOK?1e9:0)+q.pb.mw*1e6+(q.supOK?2e5:0)+(q.pondOK?1e5:0);
+    const runPass=(mode,order,loose,subFirst)=>{
+      placed.splice(pinFloor);
+      let subOK=subFirst?placeSub():false;
+      const pb=placeBuildings(mode,order,loose);
+      if(!subFirst) subOK=placeSub();
+      const supOK=placeSupport(),pondOK=placePond();
+      return {pb,subOK,supOK,pondOK,items:placed.slice(pinFloor)};};
+    const full=q=>q.pb.mw>=targetMW&&q.subOK&&q.supOK&&q.pondOK;
+    let best=runPass(undefined,undefined,false,true);
+    if(fine&&!full(best)){const q=runPass(undefined,bySize,false,false);if(scoreOf(q)>scoreOf(best))best=q;}
+    if(fine&&deep&&!full(best)){
       /* Tight sites: the spread pass scatters blocks and leaves no room for the
-         rest. Try again with buildings first, largest first, packed against the
-         boundary (then plain first-fit), and keep whichever carries more load. */
-      let best={pb,subOK,items:placed.slice(pinFloor)};
-      /* the last passes drop the "must front a road" rule: access drives are
-         added afterwards to any block left without one */
-      for(const [mode,loose] of [[spreadMode,false],["edge",false],[false,false],["edge",true],[false,true]]){
-        placed.splice(pinFloor);
-        const pb2=placeBuildings(mode,mode===spreadMode?undefined:bySize,loose);
-        const sub2=tryPlace(subS+8,subS+8,"sub",{area:subArea},false,YARD_CLEAR+o.road,edgeMode);
-        if(sub2&&pb2.mw>best.pb.mw) best={pb:pb2,subOK:sub2,items:placed.slice(pinFloor)};
-        if(best.pb.mw>=targetMW) break;}
-      placed.splice(pinFloor);best.items.forEach(q=>placed.push(q));pb=best.pb;subOK=best.subOK;}
-    const pw=Math.sqrt(pondArea*1.6),pondOK=pondArea<1?true:tryPlace(pw,pondArea/pw,"pond",{area:pondArea},true,null,edgeMode);
-    const sw=Math.sqrt(supportArea*2),supOK=tryPlace(sw,supportArea/sw,"support",{area:supportArea},true,o.road+6,edgeMode);
+         rest. Retry with buildings first, largest first, packed against the
+         boundary; the loose passes drop the "must front a road" rule and rely
+         on access drives added afterwards. */
+      const passes=[["edge",false],[false,false],["edge",true],[false,true]];
+      if(!o.optimise){
+        search: for(const [mode,loose] of passes){
+          const q=runPass(mode,bySize,loose,false);
+          if(scoreOf(q)>scoreOf(best)) best=q;
+          if(full(best)) break search;}}
+      else{
+        /* Optimise: every building order (random ones past four) with every
+           pass style, at full resolution, until the time budget runs out. */
+        const n=specs.length,perm=a=>a.length<2?[a]:a.flatMap((x,i)=>perm(a.slice(0,i).concat(a.slice(i+1))).map(r=>[x].concat(r)));
+        const orders=[bySize].concat(n<=4?perm(specs.map((x,i)=>i)):[bySize.slice().reverse()].concat(Array.from({length:8},()=>specs.map((x,i)=>i).sort(()=>Math.random()-0.5))));
+        search: for(const order of orders) for(const [mode,loose] of passes) for(const sf of [false,true]){
+          if(Date.now()>o.optimiseUntil) break search;
+          const q=runPass(mode,order,loose,sf);
+          if(scoreOf(q)>scoreOf(best)) best=q;
+          if(full(best)) break search;}}}
+    placed.splice(pinFloor);best.items.forEach(q=>placed.push(q));
+    const pb=best.pb,subOK=best.subOK,supOK=best.supOK,pondOK=best.pondOK;
     return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,pinsPlaced,subOK,pondOK,supOK};};
 
-  for(const deg of angs) for(const type of types){
-    const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
-    const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
-    const bb=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
-    const sets=(o.customRoads&&o.customRoads.length)
-      ? [o.customRoads.map(s2=>({a:rot(s2.a,-a),b:rot(s2.b,-a),w:s2.w,kind:"custom"}))]
-      : layoutsFor(type,P,o,env,coarse);
-    if(!sets.length) continue;
-    /* score each layout quickly, then settle the winner properly */
-    let pick=sets[0],pickMW=-1;
-    for(const roads of sets){
-      const q=runPlacement(P,bb,roads,false,a);
-      if(q.mw>pickMW){pickMW=q.mw;pick=roads;}
-      if(pickMW>=targetMW) break;}
-    let roads=pick;
-    const out=runPlacement(P,bb,roads,!coarse,a);
-    roads=roads.concat(accessDrives(out.placed,roads,o,P));
+  /* A layout is scored so that a buildable plan always outranks a bigger one
+     that has nowhere to put its substation; then load, parking, retention,
+     and least road. */
+  const rank=q=>(q.subOK?1e9:0)+q.mw*1e6+(q.supOK?2e5:0)+(q.pondOK?1e5:0)-q.ra*0.4;
+  const finish=(deg,a,type,P,bb,base,out)=>{
+    const roads=base.concat(accessDrives(out.placed,base,o,P));
     const cov=out.built.reduce((t,s)=>t+s.foot+s.adminFoot,0)/siteArea*100;
     const ra=roadArea(roads),gate=gateFor(P,roads,o.frontPoint?rot(o.frontPoint,-a):null);
     /* Phase order: buildings are numbered outward from the gate, so B1 is the
@@ -770,10 +796,37 @@ function solve(o,poly,B,coarse,hintDeg){
         const d=Math.hypot(c[0]-gate.node[0],c[1]-gate.node[1]);
         if(d<bd){bd=d;best=mu;}}
       pl.meta.mirror=best;}
-    res.push({deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,phases,pinsPlaced:out.pinsPlaced,
+    return {deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,phases,pinsPlaced:out.pinsPlaced,
       subOK:out.subOK,pondOK:out.pondOK,supOK:out.supOK,cov,specs,gate,roadArea:ra,targetMW,
-      score:out.mw*1e6+(out.subOK?4e5:0)+(out.pondOK?2e5:0)+(out.supOK?1e5:0)-ra*0.4});
+      score:rank({subOK:out.subOK,mw:out.mw,supOK:out.supOK,pondOK:out.pondOK,ra}),_ctx:{P,bb,base}};};
+  for(const deg of angs) for(const type of types){
+    const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
+    const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
+    const bb=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
+    const sets=(o.customRoads&&o.customRoads.length)
+      ? [o.customRoads.map(s2=>({a:rot(s2.a,-a),b:rot(s2.b,-a),w:s2.w,kind:"custom"}))]
+      : layoutsFor(type,P,o,env,coarse);
+    if(!sets.length) continue;
+    /* score each layout quickly, then settle the winner properly */
+    let pick=sets[0],pickS=-Infinity;
+    for(const roads of sets){
+      const q=runPlacement(P,bb,roads,false,a,false);
+      const sc=rank({subOK:q.subOK,mw:q.mw,supOK:q.supOK,pondOK:q.pondOK,ra:0});
+      if(sc>pickS){pickS=sc;pick=roads;}
+      if(q.mw>=targetMW&&q.subOK&&q.supOK&&q.pondOK) break;}
+    res.push(finish(deg,a,type,P,bb,pick,runPlacement(P,bb,pick,!coarse,a,false)));
   }
+  /* The deeper search (other packing orders, loose road frontage) is costly,
+     so it runs only on the two most promising layouts and only when they
+     leave something out. */
+  if(!coarse){
+    const t0=Date.now();
+    const cand=res.slice().sort((p,q)=>(q.mw-p.mw)||(q.score-p.score))
+      .filter(r=>!(r.mw>=targetMW&&r.subOK&&r.supOK&&r.pondOK));
+    for(const r of cand){const c=r._ctx;
+      if(o.optimise?Date.now()>o.optimiseUntil:cand.indexOf(r)>=1) break;
+      const q=finish(r.deg,r.a,r.type,c.P,c.bb,c.base,runPlacement(c.P,c.bb,c.base,true,r.a,true));
+      if(q.score>r.score) res[res.indexOf(r)]=q;}}
   const wantInfill=o.massing==="infill"||o.circulation==="infill"||
     (o.massing!=="modular"&&(!res.length||Math.max(0,...res.map(r=>r.mw))<targetMW*0.999));
   if(wantInfill){const inf=solveInfill(o,poly,B,siteArea,[...angs]);if(inf)res.push(inf);}
@@ -796,9 +849,9 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const liquidMW=sum(s=>s.m*s.liquid/100),cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
   const maxHt=L.length?Math.max(...L.map(s=>s.height)):0,flags=[];
   const heavy=L.filter(s=>s.rackKg>B.rackKgLimit);
-  if(!r.subOK) flags.push("Substation does not fit on the site.");
+  if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to 2.5:1, no side under 35 m, plus an 8 m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
   if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
-  if(!r.supOK) flags.push("Parking and support yards do not fit.");
+  if(!r.supOK) flags.push("Parking and support yards ("+fmt(supportArea,0)+" sqm, tried as one yard or two, no side under 16 m) do not fit. Try Optimise, or allow for parking inside the buildings.");
   if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
   if(infill){const s0=L[0];
     flags.push("The plan shows the ground floor. Upper floors carry more hall area once the dock and lobby are excluded.");
@@ -1422,9 +1475,10 @@ function schedule(coarse){
   pendingCoarse=true; if(raf) return;
   raf=requestAnimationFrame(()=>{raf=null;runSolve(true);});
 }
-function runSolve(coarse){
+function runSolve(coarse,optimise){
   if(state.ring.length<3||state.drawing) {renderEmpty();return;}
   const o=readOpts(); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
+  if(optimise){o.optimise=true;o.optimiseUntil=Date.now()+8000;}
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=activeBOD();
   o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
   o.pins=(o.pinsLL||[]).map(F.toM);
@@ -1609,6 +1663,14 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
   <div class="legend"><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:#6E95BD">Roof chiller deck (dashed)</span><span style="--c:${COLORS.yard}">Ground heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span></div>
   <p class="hint">Interior detail appears as you zoom in: rack rows at the profile's ${fmt(B.rowPitch||6,1)} m pitch, and one electrical bay per 2 MW power stream — ${op.infill?"drawn as rooms, since an infill building holds its electrical plant inside":(o.elec==="EMOD"?"drawn as separate enclosures for EMOD":"drawn as one continuous room for EROOM")}. It shows the arrangement the basis of design fixes, not an engineered rack layout.</p>`;}
+$("btnOpt").onclick=()=>{
+  if(state.ring.length<3){status("Draw a site first.");return;}
+  const before=state.result&&state.result.options[state.opt];
+  $("btnOpt").disabled=true;$("btnOpt").textContent="Optimising\u2026";status("Searching layouts for up to 8 seconds\u2026");
+  setTimeout(()=>{const t=Date.now();runSolve(false,true);persist();
+    $("btnOpt").disabled=false;$("btnOpt").textContent="Optimise";
+    const op=state.result&&state.result.options[0];
+    status(op?("Optimised in "+((Date.now()-t)/1000).toFixed(1)+" s: "+fmt(op.it,0)+" MW"+(before?" (was "+fmt(before.it,0)+" MW)":"")+". Changing any input re-solves normally."):"");},60);};
 $("btnNext").onclick=()=>{if(!state.result)return;state.opt=(state.opt+1)%state.result.options.length;state.lastDeg=state.result.options[state.opt].deg;renderLayout();renderLive(false);renderSpec();};
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
