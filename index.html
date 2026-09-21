@@ -612,6 +612,16 @@ function solveInfill(o,poly,B,siteArea,angles){
     score:1e9+mw*1e6-1e3};}
 
 function solve(o,poly,B,coarse,hintDeg){
+  /* Optimise without a fixed mix also tries splitting the load into fewer,
+     larger buildings or more, smaller ones, and keeps the best result. */
+  if(o.optimise&&!coarse&&!(o.mix&&o.mix.length)&&!o._split){
+    const n=Math.ceil(o.targetMW/o.bldgMax),sizes=new Set([o.bldgMax]);
+    for(const k of [n-1,n+1,n+2]) if(k>=1) sizes.add(Math.ceil(o.targetMW/k));
+    let out=null;
+    for(const bm of sizes){ if(out&&Date.now()>o.optimiseUntil) break;
+      const r=solve(Object.assign({},o,{bldgMax:bm,_split:true}),poly,B,coarse,hintDeg);
+      if(!out||r.best>out.best) out=r;}
+    return out;}
   YARD_CLEAR=(B.yardClear>0?B.yardClear:15);
   if(polyArea(poly)<0) poly=poly.slice().reverse();
   const siteArea=Math.abs(polyArea(poly));
@@ -633,6 +643,7 @@ function solve(o,poly,B,coarse,hintDeg){
     let t=Math.atan2(b[1]-a[1],b[0]-a[0]);t=((t%(Math.PI/2))+Math.PI/2)%(Math.PI/2);
     angs.add(Math.round(t*180/Math.PI)%90);}
   if(!angs.size) angs.add(0);
+  if(o.optimise&&!coarse) for(let d=0;d<90;d+=15) angs.add(d);
   if(coarse&&hintDeg!=null&&angs.has(hintDeg)){angs.clear();angs.add(hintDeg);}
   let types=o.circulation==="auto"?["internal","perimeter","external"]:(o.circulation==="infill"?[]:[o.circulation]);
   if(o.customRoads&&o.customRoads.length) types=["custom"];
@@ -657,6 +668,50 @@ function solve(o,poly,B,coarse,hintDeg){
         if(d<s.w/2+1) return false;
         if(clear!=null&&d<=s.w/2+clear) near=true;}
       return clear==null?true:near;};
+    /* Occupancy raster: a fast, exact-safe prefilter. A cell is marked only
+       when every point in it is unusable (outside the setback line, inside a
+       road corridor, or inside something already placed), so a candidate that
+       touches a marked cell can be rejected without the full geometry check.
+       Everything that passes is still checked exactly by free(). */
+    const cs=Math.max(1.5,step0/2),hd=cs*Math.SQRT1_2,gx=bb[0]-cs,gy=bb[1]-cs;
+    const NX=Math.ceil((bb[2]-bb[0])/cs)+3,NY=Math.ceil((bb[3]-bb[1])/cs)+3;
+    /* the boundary part depends only on the rotated site, so it is cached
+       across the many road layouts tried at one orientation */
+    const pkey=cs+"|"+o.setback;
+    let pm=P.__grid&&P.__grid.key===pkey?P.__grid.m:null;
+    if(!pm){pm=new Uint8Array(NX*NY);const lim=o.setback-hd;
+      for(let j=0;j<NY;j++) for(let i=0;i<NX;i++){
+        const cx=gx+(i+0.5)*cs,cy=gy+(j+0.5)*cs,ins=pip(cx,cy,P);
+        if(!ins&&lim>0){pm[j*NX+i]=1;continue;}
+        let d=Infinity;
+        for(let k=0;k<P.length&&d>=Math.abs(lim);k++){const a=P[k],b=P[(k+1)%P.length];
+          const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((cx-a[0])*dx+(cy-a[1])*dy)/l:0;t=t<0?0:t>1?1:t;
+          const ex=a[0]+t*dx-cx,ey=a[1]+t*dy-cy;d=Math.min(d,Math.sqrt(ex*ex+ey*ey));}
+        if((ins?d:-d)<lim) pm[j*NX+i]=1;}
+      Object.defineProperty(P,"__grid",{value:{key:pkey,m:pm},configurable:true,writable:true});}
+    const stat=pm.slice();
+    /* road corridors: only the cells inside each segment's bounding box */
+    for(const sg of roads){const rr=sg.w/2+1-hd;if(rr<=0)continue;
+      const x0=Math.min(sg.a[0],sg.b[0])-rr,x1=Math.max(sg.a[0],sg.b[0])+rr,y0=Math.min(sg.a[1],sg.b[1])-rr,y1=Math.max(sg.a[1],sg.b[1])+rr;
+      for(let j=Math.max(0,Math.floor((y0-gy)/cs));j<=Math.min(NY-1,Math.floor((y1-gy)/cs));j++)
+        for(let i=Math.max(0,Math.floor((x0-gx)/cs));i<=Math.min(NX-1,Math.floor((x1-gx)/cs));i++)
+          if(!stat[j*NX+i]&&segDist([gx+(i+0.5)*cs,gy+(j+0.5)*cs],sg.a,sg.b)<rr) stat[j*NX+i]=1;}
+    let satKey=null,satA=null,satB=null;
+    const buildSat=(withBldg)=>{const g=stat.slice();
+      for(const q of placed){if(!withBldg&&q.kind==="bldg")continue;const r=q.r;
+        const i0=Math.ceil((r[0]-gx)/cs),i1=Math.floor((r[2]-gx)/cs)-1,j0=Math.ceil((r[1]-gy)/cs),j1=Math.floor((r[3]-gy)/cs)-1;
+        for(let j=Math.max(0,j0);j<=Math.min(NY-1,j1);j++) for(let i=Math.max(0,i0);i<=Math.min(NX-1,i1);i++) g[j*NX+i]=1;}
+      const S=new Int32Array((NX+1)*(NY+1));
+      for(let j=0;j<NY;j++){let row=0;for(let i=0;i<NX;i++){row+=g[j*NX+i];S[(j+1)*(NX+1)+i+1]=S[j*(NX+1)+i+1]+row;}}
+      return S;};
+    const blocked=(r,isBldg)=>{
+      let key=placed.length;for(const q of placed) key=key*31+q.r[0]*7.13+q.r[1]*3.7;
+      if(key!==satKey){satKey=key;satA=buildSat(true);satB=buildSat(false);}
+      const S=isBldg?satB:satA;
+      const i0=Math.max(0,Math.floor((r[0]-gx)/cs+1e-9)),i1=Math.min(NX,Math.ceil((r[2]-gx)/cs-1e-9));
+      const j0=Math.max(0,Math.floor((r[1]-gy)/cs+1e-9)),j1=Math.min(NY,Math.ceil((r[3]-gy)/cs-1e-9));
+      if(i0>=i1||j0>=j1) return false;
+      return S[j1*(NX+1)+i1]-S[j0*(NX+1)+i1]-S[j1*(NX+1)+i0]+S[j0*(NX+1)+i0]>0;};
     const spreadScore=r=>{let d=1e9;
       for(const q of placed){const dx=Math.max(0,Math.max(q.r[0]-r[2],r[0]-q.r[2])),dy=Math.max(0,Math.max(q.r[1]-r[3],r[1]-q.r[3]));
         d=Math.min(d,Math.hypot(dx,dy));}
@@ -671,6 +726,7 @@ function solve(o,poly,B,coarse,hintDeg){
         for(const [ww,hh,sw] of (swap?[[w,h,false],[h,w,true]]:[[w,h,false]])){
           const r=[x,y,x+ww,y+hh];
           if(r[2]>bb[2]||r[3]>bb[3]) continue;
+          if(blocked(r,kind==="bldg")) continue;
           if(!free(r,clear,kind==="bldg"?Object.assign({swap:sw},meta):null)) continue;
           if(!mode||(mode==="spread"&&!placed.length)){placed.push({r,kind,meta:Object.assign({swap:sw},meta)});return true;}
           const sc=mode==="edge"?edgeScore(r):spreadScore(r);
@@ -824,7 +880,7 @@ function solve(o,poly,B,coarse,hintDeg){
     const cand=res.slice().sort((p,q)=>(q.mw-p.mw)||(q.score-p.score))
       .filter(r=>!(r.mw>=targetMW&&r.subOK&&r.supOK&&r.pondOK));
     for(const r of cand){const c=r._ctx;
-      if(o.optimise?Date.now()>o.optimiseUntil:cand.indexOf(r)>=1) break;
+      if(o.optimise?Date.now()>o.optimiseUntil:cand.indexOf(r)>=2) break;
       const q=finish(r.deg,r.a,r.type,c.P,c.bb,c.base,runPlacement(c.P,c.bb,c.base,true,r.a,true));
       if(q.score>r.score) res[res.indexOf(r)]=q;}}
   const wantInfill=o.massing==="infill"||o.circulation==="infill"||
@@ -838,7 +894,7 @@ function solve(o,poly,B,coarse,hintDeg){
   for(const r of res){ if(top.length>=3) break; if(top.indexOf(r)>=0) continue;
     if(top.some(t=>t.type===r.type&&t.deg===r.deg)) continue;
     if(top.length&&r.mw<top[0].mw*0.5) continue; top.push(r);}
-  return {options:top.map(r=>summarise(r,o,B,siteArea,subArea,pondArea,supportArea)),siteArea};
+  return {options:top.map(r=>summarise(r,o,B,siteArea,subArea,pondArea,supportArea)),siteArea,best:top.length?top[0].score:-Infinity};
 }
 
 function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
