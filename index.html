@@ -1725,8 +1725,16 @@ function renderLayout(){
     if(op.dock) quad(op.dock,"apron",null);
     for(const z of op.zones) box(z.r,z.kind,tag(z.name,z.area),z.area);
     const rc=op.rect,el=document.createElement("div");el.className="lbl";
+    /* roof chiller deck over the building, drawn from the end away from the
+       dock, sized to the heat rejection the roof carries */
+    if(b0.roofHR>0){const W=rc[2]-rc[0],H=rc[3]-rc[1],f=Math.min(1,b0.roofHR/Math.max(1,W*H)),ins=Math.min(3,Math.min(W,H)*0.03);
+      const dz=op.zones.find(z=>z.kind==="apron")||op.zones[0],dc=dz?[(dz.r[0]+dz.r[2])/2,(dz.r[1]+dz.r[3])/2]:[rc[0],rc[1]];
+      let r;
+      if(W>=H){const len=W*f;r=dc[0]<(rc[0]+rc[2])/2?[rc[2]-len+ins,rc[1]+ins,rc[2]-ins,rc[3]-ins]:[rc[0]+ins,rc[1]+ins,rc[0]+len-ins,rc[3]-ins];}
+      else{const len=H*f;r=dc[1]<(rc[1]+rc[3])/2?[rc[0]+ins,rc[3]-len+ins,rc[2]-ins,rc[3]-ins]:[rc[0]+ins,rc[1]+ins,rc[2]-ins,rc[1]+len-ins];}
+      box(r,"roofhr",null);}
     el.innerHTML="B1 "+fmt(b0.m,0)+" MW \u00B7 "+DSHORT[b0.dens]+"<br><span style='font-weight:400;opacity:.8'>"
-      +b0.storeys+" floors \u00B7 "+fmt(b0.gross,0)+" sqm GFA</span>";
+      +b0.storeys+" floors \u00B7 "+fmt(b0.gross,0)+" sqm GFA"+(b0.roofHR>0?" \u00B7 roof chillers "+fmt(b0.roofHR,0)+" sqm":"")+"</span>";
     el.style.background="rgba(255,255,255,.92)";el.style.border="1px solid rgba(29,43,54,.35)";
     labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL((rc[0]+rc[2])/2,rc[3])).addTo(map));
   }
