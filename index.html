@@ -66,6 +66,8 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 th{padding:4px 0;border-bottom:1px solid var(--line);text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;opacity:.65}
 th:last-child{text-align:right}
 .opmenu{position:relative;display:inline-block}
+#btnPause.on{background:#B7791F;color:#fff;border-color:#B7791F}
+body.paused .live{outline:2px dashed #B7791F;outline-offset:2px}
 .ff{position:absolute;top:108px;right:10px;z-index:6;width:min(440px,calc(100% - 20px));max-height:calc(100% - 150px);overflow:auto;box-shadow:0 6px 18px rgba(0,0,0,.18);border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--ink);padding:10px;display:flex;flex-direction:column;gap:8px}
 .ff[hidden]{display:none}
 .ff-head{display:flex;flex-direction:column;gap:2px}
@@ -278,6 +280,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button>
     <button class="btn" id="btnSubPin" type="button" aria-pressed="false">Pin substation</button>
     <button class="btn" id="btnBase" type="button">Satellite</button>
+    <button class="btn" id="btnPause" type="button" aria-pressed="false" title="Stop re-solving while you edit; the site outline and roads still move. Press again (or P) to solve once with every change.">Pause solving</button>
     <button class="btn" id="btnOpt" type="button" title="Search harder: every building order, packing style and road frontage, for up to 8 seconds">Optimise</button>
     <button class="btn" id="btnForce" type="button" aria-expanded="false" title="Relax design values one step at a time until the target fits, then undo what was not needed">Force fit</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
@@ -1620,7 +1623,7 @@ const EMPTY={type:"FeatureCollection",features:[]};
 map.on("load",()=>{
   map.addSource("layout",{type:"geojson",data:EMPTY});
   map.addSource("site",{type:"geojson",data:EMPTY});
-  map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":1}});
+  map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":0.9}});
   map.addLayer({id:"layout-fill",type:"fill",source:"layout",filter:["==",["geometry-type"],"Polygon"],paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":1}});
   map.addLayer({id:"layout-line",type:"line",source:"layout",filter:["!",["in",["get","kind"],["literal",["roofhr","fence","clearzone"]]]],paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
   map.addLayer({id:"roof-line",type:"line",source:"layout",filter:["==",["get","kind"],"roofhr"],
@@ -1630,6 +1633,8 @@ map.on("load",()=>{
     paint:{"fill-color":"#4A5D6E","fill-opacity":0.33}});
   map.addLayer({id:"detail-line",type:"line",source:"detail",filter:["==",["geometry-type"],"LineString"],
     paint:{"line-color":"#2C3E4C","line-width":0.9,"line-opacity":0.55}});
+  map.addSource("roadprev",{type:"geojson",data:EMPTY});
+  map.addLayer({id:"roadprev-line",type:"line",source:"roadprev",paint:{"line-color":"#B7791F","line-width":3,"line-dasharray":[2,1]}});
   map.addLayer({id:"site-line",type:"line",source:"site",paint:{"line-color":"#0F6E8C","line-width":2.5,"line-dasharray":[3,1.5]}});
   map.addLayer({id:"fence-line",type:"line",source:"layout",filter:["==",["get","kind"],"fence"],
     paint:{"line-color":"#2F3A40","line-width":2.6,"line-dasharray":[1,1.6]}});
@@ -1776,6 +1781,11 @@ const REFS=[
 function haversineKm(a,b){const R=6371.0088,t=Math.PI/180,dl=(b[1]-a[1])*t,dn=(b[0]-a[0])*t;
   const h=Math.sin(dl/2)**2+Math.cos(a[1]*t)*Math.cos(b[1]*t)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
 function schedule(coarse){
+  if(state.paused){state.dirty=true;
+    /* paused: show edited roads as a light preview instead of re-solving */
+    const rs=map.getSource("roadprev"),R2=state.roadsLL;
+    if(rs) rs.setData(R2&&R2.edges&&R2.edges.length?{type:"FeatureCollection",features:R2.edges.map(e=>({type:"Feature",properties:{},geometry:{type:"LineString",coordinates:[R2.nodes[e[0]],R2.nodes[e[1]]]}}))}:EMPTY);
+    return;}
   if(!coarse){clearTimeout(fullTimer);fullTimer=setTimeout(()=>{runSolve(false);persist();},120);return;}
   pendingCoarse=true; if(raf) return;
   raf=requestAnimationFrame(()=>{raf=null;runSolve(true);});
@@ -1802,6 +1812,7 @@ function runSolve(coarse,optimise,ov,budget,probe){
     : null;
   const res=solve(o,poly,B,coarse,state.lastDeg);
   if(probe) return {res,o};
+  {const rs=map.getSource("roadprev");if(rs&&!coarse)rs.setData(EMPTY);}
   if(view) view.done=true;
   if(!coarse) state.lastOpt=!!optimise;
   if(!res.options.length) return;
@@ -2011,7 +2022,14 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
   <div class="legend"><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:#6E95BD">Roof chiller deck (dashed)</span><span style="--c:${COLORS.yard}">Ground heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span>${o.fenceOn?'<span style="--c:#2F3A40">Security fence (dotted) and clear zone</span><span style="--c:#C9A27E">Guardhouse</span>':""}</div>
   <p class="hint">Interior detail appears as you zoom in: rack rows at the profile's ${fmt(B.rowPitch||6,1)} m pitch, and one electrical bay per 2 MW power stream — ${op.infill?"drawn as rooms, since an infill building holds its electrical plant inside":(o.elec==="EMOD"?"drawn as separate enclosures for EMOD":"drawn as one continuous room for EROOM")}. It shows the arrangement the basis of design fixes, not an engineered rack layout.</p>`;}
-$("btnOpt").onclick=()=>{state.pendingView=null;
+function setPaused(v){state.paused=v;const b=$("btnPause");b.setAttribute("aria-pressed",String(v));
+  b.textContent=v?"Resume solving":"Pause solving";b.classList.toggle("on",v);
+  if(v){state.dirty=false;status("Solving paused. Edit freely; press Resume solving (or P) to update the layout.");}
+  else{if(state.dirty&&state.ring.length>=3){runSolve(false);persist();}state.dirty=false;status("");}
+  document.body.classList.toggle("paused",v);}
+$("btnPause").onclick=()=>setPaused(!state.paused);
+document.addEventListener("keydown",e=>{if((e.key==="p"||e.key==="P")&&!e.ctrlKey&&!e.metaKey&&!/INPUT|SELECT|TEXTAREA/.test((e.target.tagName||""))){e.preventDefault();setPaused(!state.paused);}});
+$("btnOpt").onclick=()=>{if(state.paused)setPaused(false);state.pendingView=null;
   if(state.ring.length<3){status("Draw a site first.");return;}
   const before=state.result&&state.result.options[state.opt];
   $("btnOpt").disabled=true;$("btnOpt").textContent="Optimising\u2026";status("Searching layouts for up to 8 seconds\u2026");
@@ -2186,21 +2204,41 @@ function captureSitePlan(){return new Promise(async res=>{
       for(const f of geo) if(f.properties.kind==="fence"){g.beginPath();f.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});
         g.setLineDash([2*d,3*d]);g.strokeStyle="#2F3A40";g.lineWidth=2.4*d;g.stroke();g.setLineDash([]);}
       /* zone labels, as in the app: name and area, shrunk to fit the zone or left out */
-      const fs1=Math.max(13*d,c.width/62);
+      const fs1=Math.max(11*d,Math.min(15*d,c.width/75));
       const boxes=[];const hit=b=>boxes.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1]);
-      for(const f of geo){const L=f.properties.lines;if(!L||f.geometry.type!=="Polygon"||f.properties.kind==="guard")continue;
+      /* one label size for the whole plan; buildings always labelled, other
+         zones only when their label fits inside them at that size */
+      const PRI={hall:0,sub:1,pond:2,support:2,yard:3,ec:4,admin:5,apron:6};
+      const cand=geo.filter(f=>f.properties.lines&&f.geometry.type==="Polygon"&&PRI[f.properties.kind]!=null)
+        .sort((x,y)=>PRI[x.properties.kind]-PRI[y.properties.kind]);
+      const fs=fs1;
+      const meas=lines=>{g.font=`600 ${fs}px ${VT.body}`;let w=g.measureText(lines[0]).width;g.font=`${fs*.86}px ${VT.body}`;for(const t of lines.slice(1))w=Math.max(w,g.measureText(t).width);return [w+fs*.7,lines.length*fs*1.12+fs*.45];};
+      const ALWAYS={hall:1,sub:1};
+      const info=cand.map(f=>{const k=f.properties.kind,L=f.properties.lines;
         const pts=f.geometry.coordinates[0].slice(0,-1).map(P),xs=pts.map(q=>q[0]),ys=pts.map(q=>q[1]);
         const cx=xs.reduce((a,b)=>a+b,0)/xs.length,cy=ys.reduce((a,b)=>a+b,0)/ys.length;
-        const zw=(Math.max(...xs)-Math.min(...xs)),zh=(Math.max(...ys)-Math.min(...ys));
-        let fs=fs1,lines=L.slice();
-        const width=()=>{g.font=`600 ${fs}px ${VT.body}`;let w=g.measureText(lines[0]).width;g.font=`${fs*.86}px ${VT.body}`;for(const t of lines.slice(1))w=Math.max(w,g.measureText(t).width);return w;};
-        while(fs>7*d&&(width()>zw*1.35||lines.length*fs*1.15>zh*1.4))fs-=d;
-        if(fs<=7*d&&lines.length>1){lines=lines.slice(0,1);fs=fs1;while(fs>7*d&&width()>zw*1.35)fs-=d;}
-        if(fs<=6.5*d)continue;
-        const w=width()+fs*.7,h=lines.length*fs*1.12+fs*.45,b=[cx-w/2,cy-h/2,cx+w/2,cy+h/2];if(hit(b))continue;boxes.push(b);
-        g.fillStyle="rgba(255,255,255,.9)";g.fillRect(b[0],b[1],w,h);
+        const zw=Math.max(...xs)-Math.min(...xs),zh=Math.max(...ys)-Math.min(...ys);
+        const fits=ls=>{const [w,h]=meas(ls);return w<=zw*1.15&&h<=zh*1.3;};
+        let lines=null;for(const ls of [L,L.slice(0,2),L.slice(0,1)]) if(fits(ls)){lines=ls;break;}
+        return {k,L,cx,cy,lines};});
+      /* a zone type is labelled everywhere or nowhere, and with the same number of lines */
+      const kindLines={};
+      for(const x of info){const n=x.lines?x.lines.length:0;kindLines[x.k]=Math.min(kindLines[x.k]==null?9:kindLines[x.k],n);}
+      /* collisions too: if any label of a type would overlap another, that type is left out */
+      {const tmp=[];for(const x of info){if(!ALWAYS[x.k])continue;const n=kindLines[x.k]||1,[w,h]=meas(x.L.slice(0,n));tmp.push([x.cx-w/2,x.cy-h/2,x.cx+w/2,x.cy+h/2]);}
+        const kinds=[...new Set(info.filter(x=>!ALWAYS[x.k]).map(x=>x.k))];
+        for(const k of kinds){const n=kindLines[k];if(!n)continue;
+          const bs=info.filter(x=>x.k===k).map(x=>{const [w,h]=meas(x.L.slice(0,n));return [x.cx-w/2,x.cy-h/2,x.cx+w/2,x.cy+h/2];});
+          const clash=bs.some(b=>tmp.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1]));
+          if(clash)kindLines[k]=0;else tmp.push(...bs);}}
+      for(const x of info){const k=x.k,L=x.L,cx=x.cx,cy=x.cy;
+        let n=kindLines[k];if(!n){if(ALWAYS[k])n=1;else continue;}
+        const lines=L.slice(0,n);
+        const [w,h]=meas(lines),bx=[cx-w/2,cy-h/2,cx+w/2,cy+h/2];
+        boxes.push(bx);
+        g.fillStyle="rgba(255,255,255,.92)";g.fillRect(bx[0],bx[1],w,h);g.strokeStyle="rgba(0,0,110,.35)";g.lineWidth=.7*d;g.strokeRect(bx[0],bx[1],w,h);
         g.textAlign="center";g.fillStyle=VT.c;
-        lines.forEach((t,i)=>{g.font=i?`${fs*.86}px ${VT.body}`:`600 ${fs}px ${VT.body}`;g.fillText(t,cx,b[1]+fs*.25+fs*(i+.88)*1.12);});g.textAlign="left";}
+        lines.forEach((t,i)=>{g.font=i?`${fs*.86}px ${VT.body}`:`600 ${fs}px ${VT.body}`;g.fillText(t,cx,bx[1]+fs*.25+fs*(i+.88)*1.12);});g.textAlign="left";}
       if(op.infill&&op.rect){const r=op.rect,b0=op.built[0],q=pt((r[0]+r[2])/2,r[3]);g.font=`600 ${fs1}px ${VT.body}`;
         const t="B1 "+fmt(b0.m,0)+" MW · "+b0.storeys+" floors",w=g.measureText(t).width+fs1;g.fillStyle=VT.c;g.fillRect(q[0]-w/2,q[1]-fs1*1.6,w,fs1*1.5);
         g.fillStyle="#fff";g.textAlign="center";g.fillText(t,q[0],q[1]-fs1*.5);g.textAlign="left";}
