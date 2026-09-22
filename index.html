@@ -1885,7 +1885,8 @@ function renderLayout(){
   const toLL=(x,y)=>F.toLL(rot([x,y],op.a));
   const minLabel=state.result.siteArea*0.004;
   const quad=(pts,kind,label,ar)=>{const ring=pts.map(p=>toLL(p[0],p[1]));ring.push(ring[0]);
-    feats.push({type:"Feature",properties:{kind:kind},geometry:{type:"Polygon",coordinates:[ring]}});
+    const lines=label?label.split(/<br\s*\/?>/i).map(t=>t.replace(/<[^>]+>/g,"").trim()).filter(Boolean):null;
+    feats.push({type:"Feature",properties:{kind:kind,lines:lines},geometry:{type:"Polygon",coordinates:[ring]}});
     if(label&&(ar===undefined||ar>=minLabel)){const c=pts.reduce((t,p)=>[t[0]+p[0]/pts.length,t[1]+p[1]/pts.length],[0,0]);
       const el=document.createElement("div");el.className="lbl";el.innerHTML=label;
       labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(c[0],c[1])).addTo(map));}};
@@ -2147,6 +2148,10 @@ function siteBoundsLL(){const xs=state.ring.map(p=>p[0]),ys=state.ring.map(p=>p[
   return [[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]];}
 /* wait for a map event, but never hang: tiles can stall offline */
 function mapEvent(ev,ms){return new Promise(ok=>{let done=false;const f=()=>{if(!done){done=true;ok();}};map.once(ev,f);setTimeout(f,ms);});}
+/* VITRO pull-out design system: one colour (cobalt) in tints */
+const VT=(()=>{const tint=p=>{const c=[0,0,110],w=[255,255,255];return "#"+c.map((v,i)=>Math.round(v*p+w[i]*(1-p)).toString(16).padStart(2,"0")).join("");};
+  return {c:"#00006E",bg:"#F5F6F8",surf:"#EEEEF7",site:"#EEEEF7",tint,body:"Aptos, 'Segoe UI', Arial, sans-serif",head:"'Aptos Display', Aptos, 'Segoe UI', Arial, sans-serif",mono:"Consolas, 'Courier New', monospace",
+    fill:{hall:tint(.62),ec:tint(.38),admin:tint(.2),apron:tint(.1),yard:tint(.3),sub:tint(.48),pond:tint(.16),support:tint(.08),road:tint(.24),guard:tint(.3),landscape:"#EEEEF7",spare:"#EEEEF7",other:tint(.15)}};})();
 function captureSitePlan(){return new Promise(async res=>{
   const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()};
   map.fitBounds(siteBoundsLL(),{padding:70,duration:0,bearing:0,pitch:0});
@@ -2157,37 +2162,63 @@ function captureSitePlan(){return new Promise(async res=>{
       try{g.drawImage(mc,0,0);}catch(e){}
       const op=state.result.options[state.opt],F=state.F;
       const pt=(x,y)=>{const q=map.project(F.toLL(rot([x,y],op.a)));return [q.x*d,q.y*d];};
-      /* redraw the plan as vectors over the basemap, so the sheet never
-         depends on what the WebGL canvas happened to hold */
-      const ring=ll=>{g.beginPath();ll.forEach((p,i)=>{const q=map.project(p);i?g.lineTo(q.x*d,q.y*d):g.moveTo(q.x*d,q.y*d);});g.closePath();};
-      ring(state.ring);g.fillStyle=COLORS.landscape;g.fill();
-      for(const f of (state.layoutGeo||[])){
+      /* VITRO pull-out style: basemap in grey, plan drawn as cobalt tints only */
+      g.fillStyle=VT.bg;g.fillRect(0,0,c.width,c.height);
+      try{g.filter="grayscale(1) contrast(.7) brightness(1.18)";g.globalAlpha=.55;g.drawImage(mc,0,0);g.filter="none";g.globalAlpha=1;}catch(e){g.filter="none";g.globalAlpha=1;}
+      const P=p=>{const q=map.project(p);return [q.x*d,q.y*d];};
+      const ring=ll=>{g.beginPath();ll.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});g.closePath();};
+      ring(state.ring);g.fillStyle=VT.site;g.fill();
+      const geo=state.layoutGeo||[];
+      for(const f of geo){
         if(f.geometry.type!=="Polygon")continue;const k=f.properties.kind;
-        if(k==="clearzone"){g.beginPath();for(const rg of f.geometry.coordinates)rg.forEach((p,i)=>{const q=map.project(p);i?g.lineTo(q.x*d,q.y*d):g.moveTo(q.x*d,q.y*d);});
-          g.fillStyle="rgba(47,58,64,0.13)";g.fill("evenodd");continue;}
-        ring(f.geometry.coordinates[0]);
-        if(k==="roofhr"){g.fillStyle="rgba(31,95,153,0.20)";g.fill();g.setLineDash([6*d,4*d]);g.strokeStyle="#1F5F99";g.lineWidth=1.6*d;g.stroke();g.setLineDash([]);continue;}
-        g.fillStyle=COLORS[k]||"#ccc";g.fill();if(k!=="road"){g.strokeStyle="rgba(29,43,54,.55)";g.lineWidth=0.8*d;g.stroke();}}
-      ring(state.ring);g.setLineDash([9*d,5*d]);g.strokeStyle="#0F6E8C";g.lineWidth=2.5*d;g.stroke();g.setLineDash([]);
-      for(const f of (state.layoutGeo||[])) if(f.properties.kind==="fence"){g.beginPath();f.geometry.coordinates.forEach((p,i)=>{const q=map.project(p);i?g.lineTo(q.x*d,q.y*d):g.moveTo(q.x*d,q.y*d);});
-        g.setLineDash([2*d,3*d]);g.strokeStyle="#2F3A40";g.lineWidth=3*d;g.stroke();g.setLineDash([]);}
-      const fs1=Math.max(13*d,c.width/70),fs2=fs1*0.82;
-      const label=(xy,t,sub)=>{g.font=`600 ${fs1}px Barlow, Arial`;const w=Math.max(g.measureText(t).width,sub?g.measureText(sub).width:0)+fs1*0.8,h=(sub?2.6:1.55)*fs1;
-        g.fillStyle="rgba(255,255,255,.9)";g.fillRect(xy[0]-w/2,xy[1]-h/2,w,h);g.strokeStyle="rgba(29,43,54,.4)";g.strokeRect(xy[0]-w/2,xy[1]-h/2,w,h);
-        g.fillStyle="#1D2B36";g.textAlign="center";g.fillText(t,xy[0],xy[1]+(sub?-0.2:0.38)*fs1);
-        if(sub){g.font=`${fs2}px Barlow, Arial`;g.fillText(sub,xy[0],xy[1]+0.95*fs1);}g.textAlign="left";};
-      if(op.infill&&op.rect){const r=op.rect,b=op.built[0];label(pt((r[0]+r[2])/2,(r[1]+r[3])/2),"B1 "+fmt(b.m,0)+" MW",b.storeys+" floors");}
-      for(const pl of op.placed){const r=pl.r,c2=pt((r[0]+r[2])/2,(r[1]+r[3])/2);
-        if(pl.kind==="bldg") label(c2,"B"+(pl.meta.i+1)+" "+fmt(pl.meta.s.m,0)+" MW",DSHORT[pl.meta.s.dens]+(pl.meta.pinned?" · pinned":""));
-        else if(pl.kind==="sub") label(c2,"Substation");}
-      if(op.gate){const e=pt(op.gate.edge[0],op.gate.edge[1]);g.fillStyle="#D97742";g.beginPath();g.arc(e[0],e[1],7*d,0,7);g.fill();
-        g.font=`600 ${12*d}px Barlow, Arial`;g.fillText("Gate",e[0]+10*d,e[1]+4*d);}
-      /* north arrow and scale */
-      const nx=c.width-40*d,ny=40*d;g.fillStyle="#1D2B36";g.beginPath();g.moveTo(nx,ny-18*d);g.lineTo(nx-8*d,ny+6*d);g.lineTo(nx,ny);g.lineTo(nx+8*d,ny+6*d);g.closePath();g.fill();
-      g.font=`600 ${12*d}px Barlow, Arial`;g.textAlign="center";g.fillText("N",nx,ny+22*d);g.textAlign="left";
+        if(k==="clearzone"){g.beginPath();for(const rg of f.geometry.coordinates)rg.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});
+          g.fillStyle="rgba(0,0,110,0.06)";g.fill("evenodd");continue;}
+        if(k==="roofhr")continue;
+        ring(f.geometry.coordinates[0]);g.fillStyle=VT.fill[k]||VT.fill.other;g.fill();
+        if(k!=="road"){g.strokeStyle="rgba(0,0,110,.55)";g.lineWidth=.8*d;g.stroke();}}
+      /* interior detail: rack rows and electrical bays */
+      try{const det=buildDetail(op,state.o,activeBOD());g.strokeStyle="rgba(255,255,255,.55)";g.lineWidth=.7*d;
+        for(const f of det.features){if(f.geometry.type==="LineString"){g.beginPath();f.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});g.stroke();}
+          else{ring(f.geometry.coordinates[0]);g.fillStyle="rgba(0,0,110,.18)";g.fill();}}}catch(e){}
+      for(const f of geo) if(f.geometry.type==="Polygon"&&f.properties.kind==="roofhr"){ring(f.geometry.coordinates[0]);g.fillStyle="rgba(0,0,110,.12)";g.fill();
+        g.setLineDash([6*d,4*d]);g.strokeStyle=VT.c;g.lineWidth=1.4*d;g.stroke();g.setLineDash([]);}
+      ring(state.ring);g.setLineDash([9*d,5*d]);g.strokeStyle=VT.c;g.lineWidth=2.2*d;g.stroke();g.setLineDash([]);
+      for(const f of geo) if(f.properties.kind==="fence"){g.beginPath();f.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});
+        g.setLineDash([2*d,3*d]);g.strokeStyle=VT.c;g.lineWidth=2.4*d;g.stroke();g.setLineDash([]);}
+      /* zone labels, as in the app: name and area, shrunk to fit the zone or left out */
+      const fs1=Math.max(13*d,c.width/62);
+      const boxes=[];const hit=b=>boxes.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1]);
+      for(const f of geo){const L=f.properties.lines;if(!L||f.geometry.type!=="Polygon"||f.properties.kind==="guard")continue;
+        const pts=f.geometry.coordinates[0].slice(0,-1).map(P),xs=pts.map(q=>q[0]),ys=pts.map(q=>q[1]);
+        const cx=xs.reduce((a,b)=>a+b,0)/xs.length,cy=ys.reduce((a,b)=>a+b,0)/ys.length;
+        const zw=(Math.max(...xs)-Math.min(...xs)),zh=(Math.max(...ys)-Math.min(...ys));
+        let fs=fs1,lines=L.slice();
+        const width=()=>{g.font=`600 ${fs}px ${VT.body}`;let w=g.measureText(lines[0]).width;g.font=`${fs*.86}px ${VT.body}`;for(const t of lines.slice(1))w=Math.max(w,g.measureText(t).width);return w;};
+        while(fs>7*d&&(width()>zw*1.35||lines.length*fs*1.15>zh*1.4))fs-=d;
+        if(fs<=7*d&&lines.length>1){lines=lines.slice(0,1);fs=fs1;while(fs>7*d&&width()>zw*1.35)fs-=d;}
+        if(fs<=6.5*d)continue;
+        const w=width()+fs*.7,h=lines.length*fs*1.12+fs*.45,b=[cx-w/2,cy-h/2,cx+w/2,cy+h/2];if(hit(b))continue;boxes.push(b);
+        g.fillStyle="rgba(255,255,255,.9)";g.fillRect(b[0],b[1],w,h);
+        g.textAlign="center";g.fillStyle=VT.c;
+        lines.forEach((t,i)=>{g.font=i?`${fs*.86}px ${VT.body}`:`600 ${fs}px ${VT.body}`;g.fillText(t,cx,b[1]+fs*.25+fs*(i+.88)*1.12);});g.textAlign="left";}
+      if(op.infill&&op.rect){const r=op.rect,b0=op.built[0],q=pt((r[0]+r[2])/2,r[3]);g.font=`600 ${fs1}px ${VT.body}`;
+        const t="B1 "+fmt(b0.m,0)+" MW · "+b0.storeys+" floors",w=g.measureText(t).width+fs1;g.fillStyle=VT.c;g.fillRect(q[0]-w/2,q[1]-fs1*1.6,w,fs1*1.5);
+        g.fillStyle="#fff";g.textAlign="center";g.fillText(t,q[0],q[1]-fs1*.5);g.textAlign="left";}
+      if(op.gate){const e=pt(op.gate.edge[0],op.gate.edge[1]);g.fillStyle=VT.c;g.beginPath();g.arc(e[0],e[1],6*d,0,7);g.fill();
+        g.font=`600 ${12*d}px ${VT.body}`;g.fillText("Gate",e[0]+9*d,e[1]+4*d);}
+      /* north arrow, scale and key */
+      const nx=c.width-40*d,ny=40*d;g.fillStyle=VT.c;g.beginPath();g.moveTo(nx,ny-18*d);g.lineTo(nx-8*d,ny+6*d);g.lineTo(nx,ny);g.lineTo(nx+8*d,ny+6*d);g.closePath();g.fill();
+      g.font=`600 ${12*d}px ${VT.body}`;g.textAlign="center";g.fillText("N",nx,ny+22*d);g.textAlign="left";
       const mpp=metresPerPixel()/d,nice=[10,20,50,100,200,500].find(v=>v/mpp>60*d)||500,px=nice/mpp;
-      g.fillStyle="rgba(255,255,255,.85)";g.fillRect(14*d,c.height-38*d,px+60*d,26*d);g.fillStyle="#1D2B36";g.fillRect(20*d,c.height-22*d,px,4*d);
-      g.fillText(nice+" m",26*d+px,c.height-17*d);
+      g.fillStyle="rgba(255,255,255,.9)";g.fillRect(14*d,c.height-38*d,px+62*d,26*d);g.fillStyle=VT.c;g.fillRect(20*d,c.height-22*d,px,4*d);
+      g.font=`${12*d}px ${VT.mono}`;g.fillText(nice+" m",26*d+px,c.height-17*d);
+      const present=new Set(geo.map(f=>f.properties.kind));
+      const key=[["hall","Data hall"],["ec","Energy centre"],["admin","Admin and logistics"],["apron","Loading dock"],["yard","Ground heat rejection"],["sub","Substation"],["pond","Retention"],["support","Parking and yards"],["road","Roads"],["roofhr","Roof chiller deck"]].filter(x=>present.has(x[0]));
+      g.font=`${11*d}px ${VT.body}`;const kh=17*d,kw=Math.max(...key.map(x=>g.measureText(x[1]).width))+30*d,kx=c.width-kw-14*d,ky=c.height-key.length*kh-20*d;
+      g.fillStyle="rgba(255,255,255,.92)";g.fillRect(kx-8*d,ky-8*d,kw+8*d,key.length*kh+14*d);
+      key.forEach((x,i)=>{const y=ky+i*kh;if(x[0]==="roofhr"){g.fillStyle="rgba(0,0,110,.12)";g.fillRect(kx,y,16*d,11*d);g.setLineDash([3*d,2*d]);g.strokeStyle=VT.c;g.strokeRect(kx,y,16*d,11*d);g.setLineDash([]);}
+        else{g.fillStyle=VT.fill[x[0]];g.fillRect(kx,y,16*d,11*d);g.strokeStyle="rgba(0,0,110,.55)";g.lineWidth=.8*d;g.strokeRect(kx,y,16*d,11*d);}
+        g.fillStyle=VT.c;g.fillText(x[1],kx+22*d,y+10*d);});
       const url=c.toDataURL("image/jpeg",0.9);
       map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});renderLayout();res(url);}}});}
 function drawLocationSketch(){
@@ -2200,21 +2231,21 @@ function drawLocationSketch(){
   const L=330,R=W-330,T=30,Bt=H-36,sc=Math.min((R-L)/((x1-x0)*k),(Bt-T)/(y1-y0));
   const ox=L+((R-L)-(x1-x0)*k*sc)/2,oy=T+((Bt-T)-(y1-y0)*sc)/2;
   const P=ll=>[ox+(ll[0]-x0)*k*sc,oy+(y1-ll[1])*sc];
-  g.fillStyle="#EEF3F6";g.fillRect(0,0,W,H);
+  g.fillStyle=VT.surf;g.fillRect(0,0,W,H);
   const S=P(cen);
   /* lines first, then points, then labels placed to avoid each other */
-  refs.forEach(r=>{r.q=P(r.ll);g.strokeStyle="#8C99A3";g.setLineDash([7,6]);g.lineWidth=2;g.beginPath();g.moveTo(S[0],S[1]);g.lineTo(r.q[0],r.q[1]);g.stroke();g.setLineDash([]);});
+  refs.forEach(r=>{r.q=P(r.ll);g.strokeStyle=VT.tint(.35);g.setLineDash([7,6]);g.lineWidth=2;g.beginPath();g.moveTo(S[0],S[1]);g.lineTo(r.q[0],r.q[1]);g.stroke();g.setLineDash([]);});
   const boxes=[];const clash=bx=>boxes.some(o=>bx[0]<o[2]&&bx[2]>o[0]&&bx[1]<o[3]&&bx[3]>o[1]);
   const put=(x,y,t,font,fill,bg)=>{g.font=font;const w=g.measureText(t).width+(bg?16:4),h=32;
     let cand=[[x+14,y-16],[x-14-w,y-16],[x+14,y+8],[x-14-w,y+8],[x+14,y-44],[x-14-w,y-44],[x-w/2,y+14],[x-w/2,y-48]];
     let bx=null;for(const [cx,cy] of cand){const t2=[cx,cy,cx+w,cy+h];if(!clash(t2)&&cx>2&&cx+w<W-2&&cy>2&&cy+h<H-2){bx=t2;break;}}
     if(!bx){const cx=Math.min(Math.max(2,x+12),W-w-2),cy=Math.min(Math.max(2,y-12),H-h-2);bx=[cx,cy,cx+w,cy+h];}
     boxes.push(bx);if(bg){g.fillStyle=bg;g.fillRect(bx[0],bx[1],w,h);}g.fillStyle=fill;g.textAlign="left";g.fillText(t,bx[0]+(bg?8:2),bx[1]+23);};
-  refs.forEach(r=>{g.fillStyle="#0F6E8C";g.beginPath();g.arc(r.q[0],r.q[1],8,0,7);g.fill();boxes.push([r.q[0]-9,r.q[1]-9,r.q[0]+9,r.q[1]+9]);});
-  g.fillStyle="#D97742";g.beginPath();g.arc(S[0],S[1],11,0,7);g.fill();g.strokeStyle="#fff";g.lineWidth=3;g.stroke();boxes.push([S[0]-12,S[1]-12,S[0]+12,S[1]+12]);
-  put(S[0],S[1],"Site","700 26px Barlow, Arial","#1D2B36");
-  refs.slice().sort((a,b)=>a.km-b.km).forEach(r=>put(r.q[0],r.q[1],r.name+"  "+fmt(r.km,1)+" km","600 23px Barlow, Arial","#FFFFFF","#1D2B36"));
-  g.font="18px Barlow, Arial";g.fillStyle="#5E6B75";g.textAlign="left";g.fillText("Straight-line distances from the site centre. Schematic.",14,H-14);
+  refs.forEach(r=>{g.fillStyle=VT.tint(.55);g.beginPath();g.arc(r.q[0],r.q[1],8,0,7);g.fill();boxes.push([r.q[0]-9,r.q[1]-9,r.q[0]+9,r.q[1]+9]);});
+  g.fillStyle=VT.c;g.beginPath();g.arc(S[0],S[1],11,0,7);g.fill();g.strokeStyle="#fff";g.lineWidth=3;g.stroke();boxes.push([S[0]-12,S[1]-12,S[0]+12,S[1]+12]);
+  put(S[0],S[1],"Site","700 26px "+VT.head,VT.c);
+  refs.slice().sort((a,b)=>a.km-b.km).forEach(r=>put(r.q[0],r.q[1],r.name+"  "+fmt(r.km,1)+" km","600 23px "+VT.mono,"#FFFFFF",VT.c));
+  g.font="18px "+VT.body;g.fillStyle=VT.tint(.6);g.textAlign="left";g.fillText("Straight-line distances from the site centre. Schematic.",14,H-14);
   return c.toDataURL("image/png");}
 function onePagerData(){
   const op=state.result.options[state.opt],o=state.o,B=activeBOD();
@@ -2236,17 +2267,16 @@ async function onePagerPDF(){
   const plan=await captureSitePlan(),loc=drawLocationSketch(),D=onePagerData();
   const E=t=>esc(t);
   w.document.open();w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${E(D.title)} one-pager</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&family=Barlow+Condensed:wght@600&display=swap" rel="stylesheet">
-<style>@page{size:13.333in 7.5in;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Barlow,Arial,sans-serif;color:#1D2B36;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.sheet{width:13.333in;height:7.5in;padding:.32in .4in;display:flex;flex-direction:column;overflow:hidden}
-h1{font:600 30px "Barlow Condensed",Arial;margin:0}.sub{color:#5E6B75;font-size:14px;margin:2px 0 0}.rule{height:3px;background:linear-gradient(90deg,#1F5F99,#D97742);margin:8px 0 12px}
+<style>@page{size:13.333in 7.5in;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Aptos,"Segoe UI",Arial,sans-serif;color:#00006E;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet{width:13.333in;height:7.5in;padding:.32in .4in;display:flex;flex-direction:column;overflow:hidden;background:#F5F6F8}
+h1{font:600 30px "Aptos Display",Aptos,"Segoe UI",Arial;margin:0;color:#00006E}.sub{color:#6666A8;font-size:14px;margin:2px 0 0}.rule{height:3px;background:#00006E;margin:8px 0 12px}
 .grid{flex:1;display:grid;grid-template-columns:1.25fr 1fr;gap:18px;min-height:0}.right{min-height:0;overflow:hidden}.left{display:grid;grid-template-rows:1fr auto;gap:8px;min-height:0}
-.left img{width:100%;height:100%;object-fit:contain;background:#fff;border:1px solid #C9D3DA;min-height:0}.left .loc{height:1.75in;object-fit:contain;background:#EEF3F6}
-.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}.kpi{background:#1D2B36;color:#fff;padding:6px 10px}.kpi b{font:600 22px "Barlow Condensed",Arial;display:block}.kpi span{font-size:11px;opacity:.8}
-table{width:100%;border-collapse:collapse;font-size:11px}th{background:#1F5F99;color:#fff;text-align:left;padding:3px 7px;font-weight:600}td{padding:2px 7px;border-bottom:1px solid #DDE3E8}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
-.phases{font-size:12px;margin:6px 0;padding:5px 8px;background:#EEF3F6}.note{font-size:11px;color:#5E6B75;margin-top:6px}.flag{font-size:11px;color:#8A3B12}
-.foot{display:flex;justify-content:space-between;font-size:10px;color:#7E8C96;margin-top:8px}.warn{background:#FFF3D6;padding:4px 8px;font-size:11px;margin-bottom:6px}
-@media screen{body{background:#888}.sheet{background:#fff;margin:20px auto;box-shadow:0 2px 12px rgba(0,0,0,.3)}}</style></head><body><div class="sheet">
+.left img{width:100%;height:100%;object-fit:contain;background:#F5F6F8;border:1px solid #CCCCE2;min-height:0}.left .loc{height:1.75in;object-fit:contain;background:#EEEEF7}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}.kpi{background:#00006E;color:#fff;padding:6px 10px}.kpi b{font:600 22px Consolas,"Courier New",monospace;display:block}.kpi span{font-size:11px;opacity:.85}
+table{width:100%;border-collapse:collapse;font:11px Consolas,"Courier New",monospace}th{background:#00006E;color:#fff;text-align:left;padding:3px 7px;font-weight:600}td{padding:2px 7px;color:#00006E}tr:nth-child(odd) td{background:#EEEEF7}td:last-child{text-align:right}
+.phases{font-size:12px;margin:6px 0;padding:5px 8px;background:#EEEEF7}.note{font-size:11px;color:#00006E;margin-top:6px}.flag{font-size:11px;color:#6666A8}
+.foot{display:flex;justify-content:space-between;font-size:10px;color:#8080B7;margin-top:8px}.warn{background:#EEEEF7;border-left:3px solid #00006E;padding:4px 8px;font-size:11px;margin-bottom:6px}
+@media screen{body{background:#888}.sheet{margin:20px auto;box-shadow:0 2px 12px rgba(0,0,0,.3)}}</style></head><body><div class="sheet">
 <h1>${E(D.title)}</h1><p class="sub">${E(D.sub)}</p><div class="rule"></div>
 <div class="grid"><div class="left"><img src="${plan}" alt="Site plan"><img class="loc" src="${loc}" alt="Location and distances"></div>
 <div class="right">${D.placeholder?'<div class="warn">Placeholder design values: import the basis of design profile before sharing.</div>':''}
@@ -2264,26 +2294,27 @@ async function onePagerPPT(){
   try{ if(!window.PptxGenJS) await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"); }
   catch(e){status("PowerPoint export needs an internet connection the first time. Use PDF (print) offline.");return;}
   const plan=await captureSitePlan(),loc=drawLocationSketch(),D=onePagerData();
-  const pp=new PptxGenJS();pp.layout="LAYOUT_WIDE";const sl=pp.addSlide();const F="Arial",ink="1D2B36",blue="1F5F99";
-  sl.addText(D.title,{x:.4,y:.25,w:12.5,h:.5,fontFace:F,fontSize:26,bold:true,color:ink});
-  sl.addText(D.sub,{x:.4,y:.72,w:12.5,h:.3,fontFace:F,fontSize:12,color:"5E6B75"});
+  const pp=new PptxGenJS();pp.layout="LAYOUT_WIDE";const sl=pp.addSlide();sl.background={color:"F5F6F8"};const F="Aptos",FH="Aptos Display",FM="Consolas",ink="00006E",blue="00006E",surf="EEEEF7",mute="6666A8";
+  sl.addText(D.title,{x:.4,y:.25,w:12.5,h:.5,fontFace:FH,fontSize:26,bold:true,color:ink});
+  sl.addText(D.sub,{x:.4,y:.72,w:12.5,h:.3,fontFace:F,fontSize:12,color:mute});
   sl.addShape(pp.ShapeType.rect,{x:.4,y:1.05,w:12.53,h:.04,fill:{color:blue},line:{color:blue}});
   const img=new Image();img.src=plan;await img.decode();const ar=img.width/img.height,bw=7.1,bh=4.25;
   let iw=bw,ih=bw/ar;if(ih>bh){ih=bh;iw=bh*ar;}
   sl.addImage({data:plan,x:.4+(bw-iw)/2,y:1.2,w:iw,h:ih});
   sl.addImage({data:loc,x:.4,y:5.55,w:1.55*1400/380,h:1.55});
   D.headline.forEach((k,i)=>{sl.addShape(pp.ShapeType.rect,{x:7.75+i*1.75,y:1.2,w:1.65,h:.7,fill:{color:ink},line:{color:ink}});
-    sl.addText([{text:k[0],options:{bold:true,fontSize:16,color:"FFFFFF",breakLine:true}},{text:k[1],options:{fontSize:9,color:"DDE3E8"}}],{x:7.8+i*1.75,y:1.22,w:1.6,h:.66,fontFace:F,valign:"middle"});});
+    sl.addText([{text:k[0],options:{bold:true,fontSize:16,color:"FFFFFF",fontFace:FM,breakLine:true}},{text:k[1],options:{fontSize:9,color:"FFFFFF",fontFace:F}}],{x:7.8+i*1.75,y:1.22,w:1.6,h:.66,fontFace:F,valign:"middle"});});
   const hdr=(a,b)=>[{text:a,options:{bold:true,color:"FFFFFF",fill:{color:blue}}},{text:b,options:{bold:true,color:"FFFFFF",fill:{color:blue},align:"right"}}];
-  const rows=[hdr("Item","Description")].concat(D.spec.map(r=>[{text:r[0]},{text:r[1],options:{align:"right"}}]));
-  sl.addTable(rows,{x:7.75,y:2.0,w:5.2,colW:[2.6,2.6],fontFace:F,fontSize:9,color:ink,border:{type:"solid",pt:.5,color:"DDE3E8"},rowH:.2,margin:.03});
+  const zr=(r,i)=>{const f=i%2?{}:{fill:{color:surf}};return [{text:r[0],options:f},{text:r[1],options:Object.assign({align:"right"},f)}];};
+  const rows=[hdr("Item","Description")].concat(D.spec.map(zr));
+  sl.addTable(rows,{x:7.75,y:2.0,w:5.2,colW:[2.6,2.6],fontFace:FM,fontSize:9,color:ink,border:{type:"none"},rowH:.2,margin:.03});
   const ty=2.0+rows.length*.205+.08;
-  sl.addText("Phasing: "+(D.phases||"—"),{x:7.75,y:ty,w:5.2,h:.3,fontFace:F,fontSize:9,color:ink,fill:{color:"EEF3F6"}});
-  const drows=[hdr("Straight-line distance to","km")].concat(D.dist.map(r=>[{text:r[0]},{text:r[1],options:{align:"right"}}]));
-  sl.addTable(drows,{x:7.75,y:ty+.38,w:5.2,colW:[3.6,1.6],fontFace:F,fontSize:9,color:ink,border:{type:"solid",pt:.5,color:"DDE3E8"},rowH:.2,margin:.03});
-  sl.addText([D.limit].concat(D.flags.map(f=>"• "+f)).join("\n"),{x:7.75,y:ty+.38+drows.length*.205+.05,w:5.2,h:.6,fontFace:F,fontSize:8,color:"5E6B75",valign:"top"});
-  sl.addText(D.bod+" · Concept test-fit only; not for design or permitting · "+D.credit+" · "+D.date,{x:.4,y:7.12,w:12.5,h:.25,fontFace:F,fontSize:8,color:"7E8C96"});
-  if(D.placeholder) sl.addText("Placeholder design values: import the basis of design profile before sharing.",{x:7.75,y:.72,w:5.2,h:.3,fontFace:F,fontSize:9,color:"8A3B12",align:"right"});
+  sl.addText("Phasing: "+(D.phases||"—"),{x:7.75,y:ty,w:5.2,h:.3,fontFace:F,fontSize:9,color:ink,fill:{color:surf}});
+  const drows=[hdr("Straight-line distance to","km")].concat(D.dist.map(zr));
+  sl.addTable(drows,{x:7.75,y:ty+.38,w:5.2,colW:[3.6,1.6],fontFace:FM,fontSize:9,color:ink,border:{type:"none"},rowH:.2,margin:.03});
+  sl.addText([D.limit].concat(D.flags.map(f=>"• "+f)).join("\n"),{x:7.75,y:ty+.38+drows.length*.205+.05,w:5.2,h:.6,fontFace:F,fontSize:8,color:mute,valign:"top"});
+  sl.addText(D.bod+" · Concept test-fit only; not for design or permitting · "+D.credit+" · "+D.date,{x:.4,y:7.12,w:12.5,h:.25,fontFace:F,fontSize:8,color:mute});
+  if(D.placeholder) sl.addText("Placeholder design values: import the basis of design profile before sharing.",{x:7.75,y:.72,w:5.2,h:.3,fontFace:F,fontSize:9,color:ink,bold:true,align:"right"});
   await pp.writeFile({fileName:base()+"-one-pager.pptx"});status("Slide saved.");}
 $("btnOne").onclick=e=>{e.stopPropagation();const m=$("oneMenu");m.hidden=!m.hidden;$("btnOne").setAttribute("aria-expanded",String(!m.hidden));};
 document.addEventListener("click",()=>{$("oneMenu").hidden=true;$("btnOne").setAttribute("aria-expanded","false");});
