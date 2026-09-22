@@ -469,6 +469,31 @@ function accessDrives(placed,roads,o,P){
     let near=Infinity;
     for(const s of roads.concat(add)) near=Math.min(near,rectSeg(r,s));
     if(near<=o.road*1.6) continue;
+    const clearOf=seg=>!placed.some(q=>q!==pl&&q.kind!=="pond"&&rectSeg(shrinkR(q.r,1),seg)===0);
+    /* a dock drive leaves the dock face square (90 degrees) and runs straight to the first road it meets */
+    if(pl.kind==="bldg"&&r!==pl.r){
+      const bc=[(pl.r[0]+pl.r[2])/2,(pl.r[1]+pl.r[3])/2],ox=c[0]-bc[0],oy=c[1]-bc[1];
+      const dirs=[[1,0,ox],[-1,0,-ox],[0,1,oy],[0,-1,-oy]].filter(d=>d[2]>0.5).sort((x,y)=>y[2]-x[2]);
+      let hit=null;
+      for(const [dx,dy] of dirs){
+        const st=dx>0?[r[2],c[1]]:dx<0?[r[0],c[1]]:dy>0?[c[0],r[3]]:[c[0],r[1]];
+        let bt=Infinity,bp=null;
+        for(const sg of roads.concat(add)){const ex=sg.b[0]-sg.a[0],ey=sg.b[1]-sg.a[1],den=dx*ey-dy*ex;if(Math.abs(den)<1e-9)continue;
+          const t=((sg.a[0]-st[0])*ey-(sg.a[1]-st[1])*ex)/den,u=((sg.a[0]-st[0])*dy-(sg.a[1]-st[1])*dx)/den;
+          if(t>0&&u>=0&&u<=1&&t<bt){bt=t;bp=[st[0]+dx*t,st[1]+dy*t];}}
+        if(bp&&bt<=o.road*1.6){hit="front";break;}
+        if(bp&&bt<250&&clearOf({a:st,b:bp})){hit=[bp,st];break;}}
+      if(hit==="front") continue;
+      if(hit){add.push({a:hit[0],b:hit[1],w:Math.max(6,o.road*0.8),kind:"access"});continue;}
+      /* otherwise meet the nearest road square-on (90 degrees to the road) */
+      let fb=null,fd=Infinity;
+      for(const sg of roads.concat(add)){const ex=sg.b[0]-sg.a[0],ey=sg.b[1]-sg.a[1],L2=ex*ex+ey*ey||1;
+        const t=((c[0]-sg.a[0])*ex+(c[1]-sg.a[1])*ey)/L2;if(t<0||t>1)continue;
+        const p=[sg.a[0]+t*ex,sg.a[1]+t*ey],d=Math.hypot(p[0]-c[0],p[1]-c[1]);
+        if(d<fd&&clearOf({a:p,b:c})){fd=d;fb=p;}}
+      if(fb){const dx=c[0]-fb[0],dy=c[1]-fb[1],l=Math.hypot(dx,dy)||1,hx=(r[2]-r[0])/2,hy=(r[3]-r[1])/2;
+        const k=Math.min(Math.abs(hx/(dx/l||1e-9)),Math.abs(hy/(dy/l||1e-9)));
+        if(l-k>4) add.push({a:fb,b:[c[0]-dx/l*k,c[1]-dy/l*k],w:Math.max(6,o.road*0.8),kind:"access"});continue;}}
     /* nearest road point whose drive does not cut through another plot */
     const cands=[];
     for(const s of roads.concat(add)){
