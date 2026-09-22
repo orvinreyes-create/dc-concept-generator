@@ -2249,14 +2249,23 @@ function drawLocationSketch(){
   return c.toDataURL("image/png");}
 function onePagerData(){
   const op=state.result.options[state.opt],o=state.o,B=activeBOD();
-  const want=["siteArea","circRow","itLoad","facLoad","racks","gfa","coverageRow","storeysRow","ecFoot","roofHR","yardHR","gensRow","fuelRow","subRow","fenceRow"];
+  const want=["itLoad","facLoad","racks","gfa","storeysRow","ecFoot","roofHR","yardHR","gensRow","fuelRow","subRow","fenceRow"];
   const by={};op.rows.forEach(r=>{if(r[2]&&!by[r[2]])by[r[2]]=r;});
   const spec=want.filter(k=>by[k]&&!(k==="yardHR"&&/^0 /.test(String(by[k][1])))).map(k=>[by[k][0],String(by[k][1])]);
-  const ph=(op.phases&&op.phases.length?op.phases:op.built.map(s=>({s}))).map((p,i)=>(p.name||"B"+(i+1))+" "+fmt(p.s.m,0)+" MW");
+  const PH=(op.phases&&op.phases.length?op.phases:op.built.map(s=>({s})));let cum=0;
+  const cool=x=>(x.liquid||0)>0?fmt(x.liquid,0)+"% liquid":"Air";
+  const ph=PH.map((p,i)=>{cum+=p.s.m;return [(p.name||"B"+(i+1)),fmt(p.s.m,0),fmt(p.s.racks,0),fmt(p.s.kw,0),cool(p.s),fmt(cum,0)];});
+  /* subtitle: what the project is, in words a reader outside the tool understands */
+  const Bs=PH.map(p=>p.s),dens=[...new Set(Bs.map(x=>x.dens))];
+  const dtxt=dens.length>1?"Mixed density: "+dens.map(k=>(k==="ent"?"Enterprise":"AI")+" "+fmt((Bs.find(x=>x.dens===k)||{}).kw,0)+" kW").join(" + ")+" per rack"
+    :(dens[0]==="ent"?"Enterprise":"AI")+", "+fmt(Bs[0].kw,0)+" kW per rack";
+  const forms=[...new Set(Bs.map(x=>x.infill?"infill":x.form))].map(f=>({side:"GRD",end:"linear",lside:"compact linear",infill:"infill"}[f]||f));
+  const btxt=op.infill?"Single infill building":Bs.length+" building"+(Bs.length>1?"s":"")+" ("+forms.join(" + ")+")";
+  const etxt=o.elec==="EMOD"?"Modular electrical skids (EMOD)":"In-building electrical rooms (EROOM)";
   return {title:$("projName").value.trim()||"Data centre concept",
-    sub:(o.profile==="metro"?"Metro":"Campus")+" · "+DLABEL[o.density]+" · "+o.elec+" · option "+String.fromCharCode(65+state.opt),
+    sub:[(o.profile==="metro"?"Metro":"Campus"),btxt,dtxt,etxt].join(" · "),
     headline:[[fmt(op.it,0)+" MW","IT load (target "+fmt(targetOf(o),0)+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
-    spec,phases:ph.join("  ·  "),dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]),
+    spec,phases:ph,dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]),
     limit:op.limit,flags:op.flags.slice(0,2),bod:B.name,placeholder:!!B.placeholder,
     date:new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"}),
     credit:state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors"};}
@@ -2275,7 +2284,7 @@ h1{font:600 30px "Aptos Display",Aptos,"Segoe UI",Arial;margin:0;color:#00006E}.
 .left img{width:100%;height:100%;object-fit:contain;background:#F5F6F8;border:1px solid #CCCCE2;min-height:0}.left .loc{height:1.75in;object-fit:contain;background:#EEEEF7}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}.kpi{background:#00006E;color:#fff;padding:6px 10px}.kpi b{font:600 22px Consolas,"Courier New",monospace;display:block}.kpi span{font-size:11px;opacity:.85}
 table{width:100%;border-collapse:collapse;font:11px Consolas,"Courier New",monospace}th{background:#00006E;color:#fff;text-align:left;padding:3px 7px;font-weight:600}td{padding:2px 7px;color:#00006E}tr:nth-child(odd) td{background:#EEEEF7}td:last-child{text-align:right}
-.phases{font-size:12px;margin:6px 0;padding:5px 8px;background:#EEEEF7}.note{font-size:11px;color:#00006E;margin-top:6px}.flag{font-size:11px;color:#6666A8}
+table.ph{margin:8px 0}table.ph th:not(:first-child){text-align:right}.note{font-size:11px;color:#00006E;margin-top:6px}.flag{font-size:11px;color:#6666A8}
 .foot{display:flex;justify-content:space-between;font-size:10px;color:#8080B7;margin-top:8px}.warn{background:#EEEEF7;border-left:3px solid #00006E;padding:4px 8px;font-size:11px;margin-bottom:6px}
 @media screen{body{background:#888}.sheet{margin:20px auto;box-shadow:0 2px 12px rgba(0,0,0,.3)}}</style></head><body><div class="sheet">
 <div class="mast"><div><h1>${E(D.title)}</h1><p class="sub">${E(D.sub)}</p></div><div class="mark"><span class="conf">CONFIDENTIAL</span><span class="brand">VITRO Test Fit and Data Center Concept<br>Business Development &amp; Innovations</span></div></div><div class="rule"></div>
@@ -2283,7 +2292,7 @@ table{width:100%;border-collapse:collapse;font:11px Consolas,"Courier New",monos
 <div class="right">${D.placeholder?'<div class="warn">Placeholder design values: import the basis of design profile before sharing.</div>':''}
 <div class="kpis">${D.headline.map(k=>`<div class="kpi"><b>${E(k[0])}</b><span>${E(k[1])}</span></div>`).join("")}</div>
 <table><tr><th>Item</th><th style="text-align:right">Description</th></tr>${D.spec.map(r=>`<tr><td>${E(r[0])}</td><td>${E(r[1])}</td></tr>`).join("")}</table>
-<div class="phases"><b>Phasing:</b> ${E(D.phases||"—")}</div>
+<table class="ph"><tr><th>Phase</th><th>IT MW</th><th>Racks</th><th>kW / rack</th><th>Cooling</th><th>Cumulative MW</th></tr>${D.phases.map(r=>`<tr>${r.map((c,i)=>`<td${i?' style="text-align:right"':''}>${E(c)}</td>`).join("")}</tr>`).join("")}</table>
 <table><tr><th>Straight-line distance to</th><th style="text-align:right">km</th></tr>${D.dist.map(r=>`<tr><td>${E(r[0])}</td><td>${E(r[1])}</td></tr>`).join("")}</table>
 <p class="note">${E(D.limit)}</p>${D.flags.map(f=>`<div class="flag">• ${E(f)}</div>`).join("")}</div></div>
 <div class="foot"><span>CONFIDENTIAL · ${E(D.bod)} · Concept test-fit only; not for design or permitting · ${E(D.credit)}</span><span>${E(D.date)}</span></div></div>
@@ -2297,7 +2306,7 @@ async function onePagerPPT(){
   const plan=await captureSitePlan(),loc=drawLocationSketch(),D=onePagerData();
   const pp=new PptxGenJS();pp.layout="LAYOUT_WIDE";const sl=pp.addSlide();sl.background={color:"F5F6F8"};const F="Aptos",FH="Aptos Display",FM="Consolas",ink="00006E",blue="00006E",surf="EEEEF7",mute="6666A8";
   sl.addText(D.title,{x:.4,y:.25,w:8.5,h:.5,fontFace:FH,fontSize:26,bold:true,color:ink});
-  sl.addText(D.sub,{x:.4,y:.72,w:8.5,h:.3,fontFace:F,fontSize:12,color:mute});
+  sl.addText(D.sub,{x:.4,y:.7,w:8.9,h:.3,fontFace:F,fontSize:10.5,color:mute,fit:"shrink"});
   sl.addText("CONFIDENTIAL",{x:10.73,y:.22,w:2.2,h:.28,fontFace:FH,fontSize:10,bold:true,charSpacing:1.5,color:"FFFFFF",fill:{color:ink},align:"center",valign:"middle"});
   sl.addText([{text:"VITRO Test Fit and Data Center Concept",options:{breakLine:true}},{text:"Business Development & Innovations"}],{x:8.4,y:.55,w:4.53,h:.45,fontFace:F,fontSize:9,bold:true,color:ink,align:"right",valign:"top"});
   sl.addShape(pp.ShapeType.rect,{x:.4,y:1.05,w:12.53,h:.04,fill:{color:blue},line:{color:blue}});
@@ -2310,12 +2319,15 @@ async function onePagerPPT(){
   const hdr=(a,b)=>[{text:a,options:{bold:true,color:"FFFFFF",fill:{color:blue}}},{text:b,options:{bold:true,color:"FFFFFF",fill:{color:blue},align:"right"}}];
   const zr=(r,i)=>{const f=i%2?{}:{fill:{color:surf}};return [{text:r[0],options:f},{text:r[1],options:Object.assign({align:"right"},f)}];};
   const rows=[hdr("Item","Description")].concat(D.spec.map(zr));
-  sl.addTable(rows,{x:7.75,y:2.0,w:5.2,colW:[2.6,2.6],fontFace:FM,fontSize:9,color:ink,border:{type:"none"},rowH:.2,margin:.03});
+  sl.addTable(rows,{x:7.75,y:2.0,w:5.2,colW:[2.75,2.45],fontFace:FM,fontSize:8,color:ink,border:{type:"none"},rowH:.2,margin:.03});
   const ty=2.0+rows.length*.205+.08;
-  sl.addText("Phasing: "+(D.phases||"—"),{x:7.75,y:ty,w:5.2,h:.3,fontFace:F,fontSize:9,color:ink,fill:{color:surf}});
+  const H=t=>({text:t,options:{bold:true,color:"FFFFFF",fill:{color:blue},align:t==="Phase"?"left":"right"}});
+  const prow=[["Phase","IT MW","Racks","kW / rack","Cooling","Cumulative MW"].map(H)].concat(D.phases.map((r,i)=>r.map((c,j)=>({text:c,options:Object.assign({align:j?"right":"left"},i%2?{}:{fill:{color:surf}})}))));
+  sl.addTable(prow,{x:7.75,y:ty,w:5.2,colW:[.6,.7,.8,.85,1.05,1.2],fontFace:FM,fontSize:8,color:ink,border:{type:"none"},rowH:.2,margin:.03});
+  const ty2=ty+prow.length*.205+.08;
   const drows=[hdr("Straight-line distance to","km")].concat(D.dist.map(zr));
-  sl.addTable(drows,{x:7.75,y:ty+.38,w:5.2,colW:[3.6,1.6],fontFace:FM,fontSize:9,color:ink,border:{type:"none"},rowH:.2,margin:.03});
-  sl.addText([D.limit].concat(D.flags.map(f=>"• "+f)).join("\n"),{x:7.75,y:ty+.38+drows.length*.205+.05,w:5.2,h:.6,fontFace:F,fontSize:8,color:mute,valign:"top"});
+  sl.addTable(drows,{x:7.75,y:ty2,w:5.2,colW:[3.6,1.6],fontFace:FM,fontSize:8,color:ink,border:{type:"none"},rowH:.2,margin:.03});
+  sl.addText([D.limit].concat(D.flags.map(f=>"• "+f)).join("\n"),{x:7.75,y:ty2+drows.length*.205+.05,w:5.2,h:.6,fontFace:F,fontSize:8,color:mute,valign:"top"});
   sl.addText("CONFIDENTIAL · "+D.bod+" · Concept test-fit only; not for design or permitting · "+D.credit+" · "+D.date,{x:.4,y:7.12,w:12.5,h:.25,fontFace:F,fontSize:8,color:mute});
   if(D.placeholder) sl.addText("Placeholder design values: import the basis of design profile before sharing.",{x:.4,y:1.1,w:7,h:.1,fontFace:F,fontSize:8,color:ink,bold:true});
   await pp.writeFile({fileName:base()+"-one-pager.pptx"});status("Slide saved.");}
