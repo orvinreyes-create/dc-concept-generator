@@ -1080,6 +1080,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
     if(L.some(s=>s.spill>0)) limit+=" Ground-level heat rejection is taking site area.";}
   const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access",custom:"Your own roads"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
+    missed:(r.missedSpecs||[]).map(x=>({i:r.specs.indexOf(x),m:x.m,dens:x.dens,form:x.form,w:Math.round((x.Lm||0)+2*o.road),h:Math.round((x.H||0)+((x.Yd||0)>0?YARD_CLEAR:o.road)+YARD_CLEAR)})),
     rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,subPinned:!!r.subPinned,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
     rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Circulation",cname+", "+r.deg+"°","circRow"],
@@ -2011,15 +2012,17 @@ const FF_STEPS=[
   apply:o=>((o.subAspect||4)<5||(o.subMinSide||30)>20)?{subAspect:Math.max(o.subAspect||4,5),subMinSide:Math.min(o.subMinSide||30,20)}:null},
  {id:"gis",name:"Compact gas-insulated (GIS) substation at half the plot area",
   apply:(o,c)=>c.subArea>1000?{subSqm:Math.max(1000,Math.round(c.subArea*0.5/100)*100)}:null},
+ {id:"unpin",name:"Let the solver move the pinned substation (Accept re-pins it where it lands)",optIn:true,
+  apply:o=>o.subPinLL?{subPinLL:null}:null},
  {id:"storeys",name:"One more storey (within the height limit)",
   apply:o=>((o.storeys+1)*6+7.5<=o.maxH)?{storeys:o.storeys+1}:null}];
 const FF_LABEL={padInSetback:["Clearances in setback",v=>v?"on":"off"],clearZone:["Fence clear zone",v=>fmt(v||0,1)+" m"],
  pond:["Retention",v=>fmt(v||0,1)+"% of site"],supportSqm:["Parking and support",v=>fmt(v||0,0)+" sqm"],roofTiers:["Chiller deck tiers",v=>String(v)],
  yardClear:["Yard clearance",v=>fmt(v>0?v:15,0)+" m"],subMargin:["Substation margin",v=>fmt(v,0)+" m"],subAspect:["Substation max aspect",v=>v+":1"],
- subMinSide:["Substation min side",v=>fmt(v,0)+" m"],subSqm:["Substation area",v=>v>0?fmt(v,0)+" sqm":"auto"],storeys:["Storeys",v=>String(v)]};
+ subMinSide:["Substation min side",v=>fmt(v,0)+" m"],subSqm:["Substation area",v=>v>0?fmt(v,0)+" sqm":"auto"],storeys:["Storeys",v=>String(v)],subPinLL:["Substation pin",v=>v?"pinned":"moved by solver"]};
 const FF_INPUT={clearZone:"clearZone",pond:"pondPct",supportSqm:"supportSqm",roofTiers:"roofTiers",yardClear:"yardClear",subMargin:"subMargin",
  subAspect:"subAspect",subMinSide:"subMinSide",subSqm:"subSqm",storeys:"storeys"};
-state.ffAllow=state.ffAllow||Object.fromEntries(FF_STEPS.map(x=>[x.id,true]));
+state.ffAllow=state.ffAllow||Object.fromEntries(FF_STEPS.map(x=>[x.id,!x.optIn]));
 function ffDrawSteps(){$("ffSteps").innerHTML=FF_STEPS.map((x,i)=>`<label><input type="checkbox" data-ff="${x.id}" ${x.fixed?"checked disabled":(state.ffAllow[x.id]?"checked":"")}> ${i+1}. ${esc(x.name)}</label>`).join("");
   $("ffSteps").querySelectorAll("input[data-ff]").forEach(c=>c.onchange=()=>{state.ffAllow[c.dataset.ff]=c.checked;});}
 $("btnForce").onclick=()=>{const p=$("ffPanel"),open=p.hidden;p.hidden=!open;$("btnForce").setAttribute("aria-expanded",String(open));if(open)ffDrawSteps();};
@@ -2068,14 +2071,26 @@ $("ffRun").onclick=()=>{
 function ffShow(base,active,log,final,best){
   const use=final?active:(best?best.active:[]),ov=Object.assign({},...use.map(a=>Object.assign({},a.patch)));state.ffOv=ov;
   runSolve(false,true,ov,6000);const op=state.result&&state.result.options[0],t=targetOf(state.o||base);
+  state.ffSubLL=null;
+  if(op&&"subPinLL" in ov){const sp=op.placed&&op.placed.find(q=>q.kind==="sub");
+    if(sp){const c=rot([(sp.r[0]+sp.r[2])/2,(sp.r[1]+sp.r[3])/2],op.a);state.ffSubLL=state.F.toLL(c);}}
+  let block="";
+  if(!final&&op&&op.missed&&op.missed.length){const oo=state.o,BB=effectiveBOD(oo);
+    block=op.missed.map(x=>{let h="<b>B"+(x.i+1)+"</b> ("+fmt(x.m,0)+" MW, "+(DSHORT[x.dens]||x.dens)+", "+(x.form==="end"?"linear":"GRD")+") needs about "+x.w+" \u00D7 "+x.h+" m including roads and yard clearances, and no clear area that size is left.";
+      if(x.dens==="ent"&&x.m>=36){try{const a=buildingSpec(x.m,oo,BB,"ai130",x.form);h+=" At AI 130 kW it would be about "+Math.round(a.Lm+2*oo.road)+" \u00D7 "+Math.round(a.H+(a.Yd>0?YARD_CLEAR:oo.road)+YARD_CLEAR)+" m; check the density is what you intend.";}catch(e){}}
+      h+=" Options: split it into smaller buildings, add storeys, change its energy-centre position"+(oo.subPin?", or tick step 8 to let the solver move the substation":"")+".";
+      return "<li>"+h+"</li>";}).join("");
+    block='<p><b>What is blocking it</b></p><ul style="margin:0;padding-left:18px">'+block+"</ul>";}
   const rows=Object.keys(ov).map(k=>{const L=FF_LABEL[k];if(!L||L[1](base[k])===L[1](ov[k]))return"";return `<tr><td>${L[0]}</td><td>${L[1](base[k])}</td><td><b>${L[1](ov[k])}</b></td></tr>`;}).join("");
   const why=log.filter(l=>!l.skip).map(l=>`<tr><td>${esc(l.x.name)}</td><td>${fmt(l.it,0)} MW</td><td>${l.gain>0?"+"+fmt(l.gain,0):fmt(l.gain,0)} MW</td></tr>`).join("");
   $("ffOut").innerHTML=`<p class="${final?"ok":"bad"}"><b>${final?"Target of "+fmt(t,0)+" MW fits":"Target not reached: best is "+fmt(op?op.it:0,0)+" of "+fmt(t,0)+" MW"}</b>${final?"":" with every allowed step. Try allowing more steps, a larger building size, or infill massing."}</p>
-  ${rows?`<table><tr><th>Concession kept</th><th>Now</th><th>Proposed</th></tr>${rows}</table>`:`<p>No value changes needed; the layout search alone fits it.</p>`}
+  ${block}${state.ffSubLL?'<p class="hint">The substation moved; Accept re-pins it at its new position.</p>':""}
+  ${rows?`<table><tr><th>Concession kept</th><th>Now</th><th>Proposed</th></tr>${rows}</table>`:(final?`<p>No value changes needed; the layout search alone fits it.</p>`:`<p>None of the allowed relaxations added any load.</p>`)}
   <details><summary class="hint">MW reached at each step of the search</summary><table><tr><th>Cumulative step</th><th>MW IT</th><th>Change</th></tr>${why}</table></details>
   <p class="hint">The map shows the proposed layout. Accept writes these values into Design values and Site rules; Discard, or changing any input, goes back to your values.</p>
   <div class="ff-bar"><button class="btn" id="ffAccept" type="button" ${rows?"":"disabled"}>Accept</button><button class="btn" id="ffDiscard" type="button">Discard</button></div>`;
-  $("ffAccept").onclick=()=>{Object.entries(state.ffOv).forEach(([k,v])=>{if(k==="padInSetback")$("padInSetback").checked=!!v;else if(FF_INPUT[k])$(FF_INPUT[k]).value=v;});
+  $("ffAccept").onclick=()=>{Object.entries(state.ffOv).forEach(([k,v])=>{if(k==="subPinLL")return;if(k==="padInSetback")$("padInSetback").checked=!!v;else if(FF_INPUT[k])$(FF_INPUT[k]).value=v;});
+    if("subPinLL" in state.ffOv&&state.ffSubLL){state.subPinLL=state.ffSubLL;drawSubPin();}
     state.ffOv=null;persist();runSolve(false,true);$("ffOut").innerHTML='<p class="ok">Values applied.</p>';status("Force-fit values applied.");};
   $("ffDiscard").onclick=()=>{state.ffOv=null;$("ffOut").innerHTML="";runSolve(false);};}
 $("btnNext").onclick=()=>{if(!state.result)return;state.opt=(state.opt+1)%state.result.options.length;state.lastDeg=state.result.options[state.opt].deg;renderLayout();renderLive(false);renderSpec();};
