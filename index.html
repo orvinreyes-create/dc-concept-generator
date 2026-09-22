@@ -464,16 +464,22 @@ function accessDrives(placed,roads,o,P){
   const add=[];
   for(const pl of placed){
     if(pl.kind!=="bldg"&&pl.kind!=="sub"&&pl.kind!=="support") continue;
-    const r=pl.r, c=[(r[0]+r[2])/2,(r[1]+r[3])/2];
+    /* a building is reached at its loading dock, not just anywhere on its wall */
+    const r=(pl.kind==="bldg"&&apronRect(pl))||pl.r, c=[(r[0]+r[2])/2,(r[1]+r[3])/2];
     let near=Infinity;
     for(const s of roads.concat(add)) near=Math.min(near,rectSeg(r,s));
     if(near<=o.road*1.6) continue;
-    let bs=null,bd=Infinity;
+    /* nearest road point whose drive does not cut through another plot */
+    const cands=[];
     for(const s of roads.concat(add)){
       for(let t=0;t<=1;t+=0.05){
         const p=[s.a[0]+t*(s.b[0]-s.a[0]),s.a[1]+t*(s.b[1]-s.a[1])];
-        const d=Math.hypot(p[0]-c[0],p[1]-c[1]);
-        if(d<bd){bd=d;bs=p;}}}
+        cands.push([Math.hypot(p[0]-c[0],p[1]-c[1]),p]);}}
+    cands.sort((x,y)=>x[0]-y[0]);
+    let bs=null;
+    for(const [,p] of cands){const seg={a:p,b:c};
+      if(!placed.some(q=>q!==pl&&q.kind!=="pond"&&rectSeg(shrinkR(q.r,1),seg)===0)){bs=p;break;}}
+    if(!bs) bs=cands.length?cands[0][1]:null;
     if(!bs) continue;
     /* stop at the building edge, not its centre */
     const dx=c[0]-bs[0],dy=c[1]-bs[1],l=Math.hypot(dx,dy)||1;
@@ -483,6 +489,12 @@ function accessDrives(placed,roads,o,P){
     if(Math.hypot(end[0]-bs[0],end[1]-bs[1])>4) add.push({a:bs,b:end,w:Math.max(6,o.road*0.8),kind:"access"});
   }
   return add;}
+function shrinkR(r,d){return [r[0]+d,r[1]+d,r[2]-d,r[3]-d];}
+/* the loading dock apron of a placed building, in the same frame as pl.r */
+function apronRect(pl){const m=pl.meta,s=m&&m.s;if(!s||!s.Z||!s.Z.apron)return null;const r=pl.r;
+  const ix=r[0]+(m.swap?m.padTop:m.padX),iy=r[1]+(m.swap?m.padX:m.padTop),U=u=>m.mirror?s.Lm-u:u,z=s.Z.apron;
+  const a0=Math.min(U(z[0]),U(z[2])),a1=Math.max(U(z[0]),U(z[2]));
+  return m.swap?[ix+z[1],iy+a0,ix+z[3],iy+a1]:[ix+a0,iy+z[1],ix+a1,iy+z[3]];}
 /* distance from an axis-aligned rect to a road centreline */
 function rectSeg(r,s){
   const C=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]];
@@ -684,11 +696,12 @@ function solve(o,poly,B,coarse,hintDeg){
   const siteArea=Math.abs(polyArea(poly));
   const mix=(o.mix&&o.mix.length)?o.mix:null;
   const specs=[];
-  const ecPos=o.ecPos||"auto";
-  const mkSpec=(m,d)=>{const side=buildingSpec(m,o,B,d),end=buildingSpec(m,o,B,d,"end");
+  const ecPosAll=o.ecPos||"auto";
+  const mkSpec=(m,d,pos)=>{const side=buildingSpec(m,o,B,d),end=buildingSpec(m,o,B,d,"end");
+    const ecPos=(pos&&pos!=="auto")?pos:ecPosAll;
     if(ecPos==="end") return Object.assign(end,{alts:[end]});
     return Object.assign(side,{alts:ecPos==="side"?[side]:[side,end]});};
-  if(mix){ for(const b of mix) specs.push(mkSpec(b.mw,b.dens)); }
+  if(mix){ for(const b of mix) specs.push(mkSpec(b.mw,b.dens,b.ec)); }
   else { let rem=o.targetMW; const n=Math.ceil(o.targetMW/o.bldgMax);
     for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(mkSpec(m,o.density));rem-=m;} }
   const targetMW=specs.reduce((t,s)=>t+s.m,0);
@@ -929,9 +942,8 @@ function solve(o,poly,B,coarse,hintDeg){
      and least road. */
   const rank=q=>(q.subOK?1e9:0)+q.mw*1e6+(q.supOK?2e5:0)+(q.pondOK?1e5:0)-q.ra*0.4;
   const finish=(deg,a,type,P,bb,base,out)=>{
-    const roads=base.concat(accessDrives(out.placed,base,o,P));
+    const gate=gateFor(P,base,o.frontPoint?rot(o.frontPoint,-a):null);
     const cov=out.built.reduce((t,s)=>t+s.foot+s.adminFoot+s.ecFoot,0)/siteArea*100;
-    const ra=roadArea(roads),gate=gateFor(P,roads,o.frontPoint?rot(o.frontPoint,-a):null);
     /* Phase order: buildings are numbered outward from the gate, so B1 is the
        first phase off the entry and the numbering matches a staged build-out. */
     const bl=out.placed.filter(p=>p.kind==="bldg");
@@ -954,6 +966,7 @@ function solve(o,poly,B,coarse,hintDeg){
         const d=Math.hypot(c[0]-gate.node[0],c[1]-gate.node[1]);
         if(d<bd){bd=d;best=mu;}}
       pl.meta.mirror=best;}
+    const roads=base.concat(accessDrives(out.placed,base,o,P)),ra=roadArea(roads);
     return {deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,phases,pinsPlaced:out.pinsPlaced,subPinned:out.subPinned,
       subOK:out.subOK,pondOK:out.pondOK,supOK:out.supOK,cov,specs,gate,roadArea:ra,targetMW,
       score:rank({subOK:out.subOK,mw:out.mw,supOK:out.supOK,pondOK:out.pondOK,ra})+(out.subPinned?5e8:0)+(out.pinsPlaced||0)*5e8,_ctx:{P,bb,base}};};
@@ -1527,10 +1540,12 @@ $("btnSubPin").onclick=()=>{
 const DSHORT={ent:"Enterprise",ai60:"AI 60 kW",ai130:"AI 130 kW",ai200:"AI 200 kW"};
 function drawMix(){
   const box=$("mixRows");
-  box.innerHTML=state.mix.map((b,i)=>'<div class="row" style="grid-template-columns:70px 1fr 28px;align-items:end;margin-bottom:5px">'
+  box.innerHTML=state.mix.map((b,i)=>'<div class="row" style="grid-template-columns:56px 1fr 1fr 28px;align-items:end;margin-bottom:5px">'
     +'<div><label for="mixMW'+i+'">B'+(i+1)+' MW</label><input id="mixMW'+i+'" type="number" min="1" value="'+b.mw+'" data-i="'+i+'" data-f="mw"></div>'
     +'<div><label for="mixD'+i+'">Density</label><select id="mixD'+i+'" data-i="'+i+'" data-f="dens">'
     +Object.keys(DSHORT).map(k=>'<option value="'+k+'"'+(k===b.dens?" selected":"")+'>'+DSHORT[k]+'</option>').join("")
+    +'</select></div><div><label for="mixE'+i+'">Energy centre</label><select id="mixE'+i+'" data-i="'+i+'" data-f="ec">'
+    +[["auto","As above"],["side","Side (GRD)"],["end","End (linear)"]].map(x=>'<option value="'+x[0]+'"'+((b.ec||"auto")===x[0]?" selected":"")+'>'+x[1]+'</option>').join("")
     +'</select></div><div><button class="btn" data-i="'+i+'" data-f="del" style="padding:7px 0" aria-label="Remove building '+(i+1)+'">\u00D7</button></div></div>').join("");
   box.querySelectorAll("[data-f]").forEach(el=>{
     const i=+el.dataset.i,f=el.dataset.f;
