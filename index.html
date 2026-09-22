@@ -2163,28 +2163,28 @@ function captureSitePlan(){return new Promise(async res=>{
       const op=state.result.options[state.opt],F=state.F;
       const pt=(x,y)=>{const q=map.project(F.toLL(rot([x,y],op.a)));return [q.x*d,q.y*d];};
       /* VITRO pull-out style: basemap in grey, plan drawn as cobalt tints only */
-      g.fillStyle=VT.bg;g.fillRect(0,0,c.width,c.height);
-      try{g.filter="grayscale(1) contrast(.7) brightness(1.18)";g.globalAlpha=.55;g.drawImage(mc,0,0);g.filter="none";g.globalAlpha=1;}catch(e){g.filter="none";g.globalAlpha=1;}
+      g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);
+      try{g.drawImage(mc,0,0);}catch(e){}
       const P=p=>{const q=map.project(p);return [q.x*d,q.y*d];};
       const ring=ll=>{g.beginPath();ll.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});g.closePath();};
-      ring(state.ring);g.fillStyle=VT.site;g.fill();
+      ring(state.ring);g.fillStyle=COLORS.landscape;g.fill();
       const geo=state.layoutGeo||[];
       for(const f of geo){
         if(f.geometry.type!=="Polygon")continue;const k=f.properties.kind;
         if(k==="clearzone"){g.beginPath();for(const rg of f.geometry.coordinates)rg.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});
-          g.fillStyle="rgba(0,0,110,0.06)";g.fill("evenodd");continue;}
+          g.fillStyle=COLORS.clearzone;g.fill("evenodd");continue;}
         if(k==="roofhr")continue;
-        ring(f.geometry.coordinates[0]);g.fillStyle=VT.fill[k]||VT.fill.other;g.fill();
-        if(k!=="road"){g.strokeStyle="rgba(0,0,110,.55)";g.lineWidth=.8*d;g.stroke();}}
+        ring(f.geometry.coordinates[0]);g.fillStyle=COLORS[k]||"#ccc";g.fill();
+        if(k!=="road"){g.strokeStyle="rgba(29,43,54,.55)";g.lineWidth=.8*d;g.stroke();}}
       /* interior detail: rack rows and electrical bays */
-      try{const det=buildDetail(op,state.o,activeBOD());g.strokeStyle="rgba(255,255,255,.55)";g.lineWidth=.7*d;
+      try{const det=buildDetail(op,state.o,activeBOD());g.strokeStyle="rgba(255,255,255,.55)";g.lineWidth=.7*d;g.strokeStyle="rgba(29,43,54,.35)";
         for(const f of det.features){if(f.geometry.type==="LineString"){g.beginPath();f.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});g.stroke();}
-          else{ring(f.geometry.coordinates[0]);g.fillStyle="rgba(0,0,110,.18)";g.fill();}}}catch(e){}
-      for(const f of geo) if(f.geometry.type==="Polygon"&&f.properties.kind==="roofhr"){ring(f.geometry.coordinates[0]);g.fillStyle="rgba(0,0,110,.12)";g.fill();
-        g.setLineDash([6*d,4*d]);g.strokeStyle=VT.c;g.lineWidth=1.4*d;g.stroke();g.setLineDash([]);}
-      ring(state.ring);g.setLineDash([9*d,5*d]);g.strokeStyle=VT.c;g.lineWidth=2.2*d;g.stroke();g.setLineDash([]);
+          else{ring(f.geometry.coordinates[0]);g.fillStyle="rgba(29,43,54,.15)";g.fill();}}}catch(e){}
+      for(const f of geo) if(f.geometry.type==="Polygon"&&f.properties.kind==="roofhr"){ring(f.geometry.coordinates[0]);g.fillStyle=COLORS.roofhr;g.fill();
+        g.setLineDash([6*d,4*d]);g.strokeStyle="#1F5F99";g.lineWidth=1.4*d;g.stroke();g.setLineDash([]);}
+      ring(state.ring);g.setLineDash([9*d,5*d]);g.strokeStyle="#0F6E8C";g.lineWidth=2.2*d;g.stroke();g.setLineDash([]);
       for(const f of geo) if(f.properties.kind==="fence"){g.beginPath();f.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});
-        g.setLineDash([2*d,3*d]);g.strokeStyle=VT.c;g.lineWidth=2.4*d;g.stroke();g.setLineDash([]);}
+        g.setLineDash([2*d,3*d]);g.strokeStyle="#2F3A40";g.lineWidth=2.4*d;g.stroke();g.setLineDash([]);}
       /* zone labels, as in the app: name and area, shrunk to fit the zone or left out */
       const fs1=Math.max(13*d,c.width/62);
       const boxes=[];const hit=b=>boxes.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1]);
@@ -2204,7 +2204,7 @@ function captureSitePlan(){return new Promise(async res=>{
       if(op.infill&&op.rect){const r=op.rect,b0=op.built[0],q=pt((r[0]+r[2])/2,r[3]);g.font=`600 ${fs1}px ${VT.body}`;
         const t="B1 "+fmt(b0.m,0)+" MW · "+b0.storeys+" floors",w=g.measureText(t).width+fs1;g.fillStyle=VT.c;g.fillRect(q[0]-w/2,q[1]-fs1*1.6,w,fs1*1.5);
         g.fillStyle="#fff";g.textAlign="center";g.fillText(t,q[0],q[1]-fs1*.5);g.textAlign="left";}
-      if(op.gate){const e=pt(op.gate.edge[0],op.gate.edge[1]);g.fillStyle=VT.c;g.beginPath();g.arc(e[0],e[1],6*d,0,7);g.fill();
+      if(op.gate){const e=pt(op.gate.edge[0],op.gate.edge[1]);g.fillStyle=COLORS.gate;g.beginPath();g.arc(e[0],e[1],6*d,0,7);g.fill();g.fillStyle=VT.c;
         g.font=`600 ${12*d}px ${VT.body}`;g.fillText("Gate",e[0]+9*d,e[1]+4*d);}
       /* north arrow, scale and key */
       const nx=c.width-40*d,ny=40*d;g.fillStyle=VT.c;g.beginPath();g.moveTo(nx,ny-18*d);g.lineTo(nx-8*d,ny+6*d);g.lineTo(nx,ny);g.lineTo(nx+8*d,ny+6*d);g.closePath();g.fill();
@@ -2216,8 +2216,8 @@ function captureSitePlan(){return new Promise(async res=>{
       const key=[["hall","Data hall"],["ec","Energy centre"],["admin","Admin and logistics"],["apron","Loading dock"],["yard","Ground heat rejection"],["sub","Substation"],["pond","Retention"],["support","Parking and yards"],["road","Roads"],["roofhr","Roof chiller deck"]].filter(x=>present.has(x[0]));
       g.font=`${11*d}px ${VT.body}`;const kh=17*d,kw=Math.max(...key.map(x=>g.measureText(x[1]).width))+30*d,kx=c.width-kw-14*d,ky=c.height-key.length*kh-20*d;
       g.fillStyle="rgba(255,255,255,.92)";g.fillRect(kx-8*d,ky-8*d,kw+8*d,key.length*kh+14*d);
-      key.forEach((x,i)=>{const y=ky+i*kh;if(x[0]==="roofhr"){g.fillStyle="rgba(0,0,110,.12)";g.fillRect(kx,y,16*d,11*d);g.setLineDash([3*d,2*d]);g.strokeStyle=VT.c;g.strokeRect(kx,y,16*d,11*d);g.setLineDash([]);}
-        else{g.fillStyle=VT.fill[x[0]];g.fillRect(kx,y,16*d,11*d);g.strokeStyle="rgba(0,0,110,.55)";g.lineWidth=.8*d;g.strokeRect(kx,y,16*d,11*d);}
+      key.forEach((x,i)=>{const y=ky+i*kh;if(x[0]==="roofhr"){g.fillStyle=COLORS.roofhr;g.fillRect(kx,y,16*d,11*d);g.setLineDash([3*d,2*d]);g.strokeStyle="#1F5F99";g.strokeRect(kx,y,16*d,11*d);g.setLineDash([]);}
+        else{g.fillStyle=COLORS[x[0]];g.fillRect(kx,y,16*d,11*d);g.strokeStyle="rgba(29,43,54,.55)";g.lineWidth=.8*d;g.strokeRect(kx,y,16*d,11*d);}
         g.fillStyle=VT.c;g.fillText(x[1],kx+22*d,y+10*d);});
       const url=c.toDataURL("image/jpeg",0.9);
       map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});renderLayout();res(url);}}});}
@@ -2270,6 +2270,7 @@ async function onePagerPDF(){
 <style>@page{size:13.333in 7.5in;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Aptos,"Segoe UI",Arial,sans-serif;color:#00006E;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .sheet{width:13.333in;height:7.5in;padding:.32in .4in;display:flex;flex-direction:column;overflow:hidden;background:#F5F6F8}
 h1{font:600 30px "Aptos Display",Aptos,"Segoe UI",Arial;margin:0;color:#00006E}.sub{color:#6666A8;font-size:14px;margin:2px 0 0}.rule{height:3px;background:#00006E;margin:8px 0 12px}
+.mast{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.mark{display:flex;flex-direction:column;align-items:flex-end;gap:5px;text-align:right}.conf{background:#00006E;color:#fff;font:700 12px "Aptos Display",Aptos,Arial;letter-spacing:.16em;padding:3px 10px}.brand{font:600 11px Aptos,"Segoe UI",Arial;color:#00006E;line-height:1.3}
 .grid{flex:1;display:grid;grid-template-columns:1.25fr 1fr;gap:18px;min-height:0}.right{min-height:0;overflow:hidden}.left{display:grid;grid-template-rows:1fr auto;gap:8px;min-height:0}
 .left img{width:100%;height:100%;object-fit:contain;background:#F5F6F8;border:1px solid #CCCCE2;min-height:0}.left .loc{height:1.75in;object-fit:contain;background:#EEEEF7}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}.kpi{background:#00006E;color:#fff;padding:6px 10px}.kpi b{font:600 22px Consolas,"Courier New",monospace;display:block}.kpi span{font-size:11px;opacity:.85}
@@ -2277,7 +2278,7 @@ table{width:100%;border-collapse:collapse;font:11px Consolas,"Courier New",monos
 .phases{font-size:12px;margin:6px 0;padding:5px 8px;background:#EEEEF7}.note{font-size:11px;color:#00006E;margin-top:6px}.flag{font-size:11px;color:#6666A8}
 .foot{display:flex;justify-content:space-between;font-size:10px;color:#8080B7;margin-top:8px}.warn{background:#EEEEF7;border-left:3px solid #00006E;padding:4px 8px;font-size:11px;margin-bottom:6px}
 @media screen{body{background:#888}.sheet{margin:20px auto;box-shadow:0 2px 12px rgba(0,0,0,.3)}}</style></head><body><div class="sheet">
-<h1>${E(D.title)}</h1><p class="sub">${E(D.sub)}</p><div class="rule"></div>
+<div class="mast"><div><h1>${E(D.title)}</h1><p class="sub">${E(D.sub)}</p></div><div class="mark"><span class="conf">CONFIDENTIAL</span><span class="brand">VITRO Test Fit and Data Center Concept<br>Business Development &amp; Innovations</span></div></div><div class="rule"></div>
 <div class="grid"><div class="left"><img src="${plan}" alt="Site plan"><img class="loc" src="${loc}" alt="Location and distances"></div>
 <div class="right">${D.placeholder?'<div class="warn">Placeholder design values: import the basis of design profile before sharing.</div>':''}
 <div class="kpis">${D.headline.map(k=>`<div class="kpi"><b>${E(k[0])}</b><span>${E(k[1])}</span></div>`).join("")}</div>
@@ -2285,7 +2286,7 @@ table{width:100%;border-collapse:collapse;font:11px Consolas,"Courier New",monos
 <div class="phases"><b>Phasing:</b> ${E(D.phases||"—")}</div>
 <table><tr><th>Straight-line distance to</th><th style="text-align:right">km</th></tr>${D.dist.map(r=>`<tr><td>${E(r[0])}</td><td>${E(r[1])}</td></tr>`).join("")}</table>
 <p class="note">${E(D.limit)}</p>${D.flags.map(f=>`<div class="flag">• ${E(f)}</div>`).join("")}</div></div>
-<div class="foot"><span>${E(D.bod)} · Concept test-fit only; not for design or permitting · ${E(D.credit)}</span><span>${E(D.date)}</span></div></div>
+<div class="foot"><span>CONFIDENTIAL · ${E(D.bod)} · Concept test-fit only; not for design or permitting · ${E(D.credit)}</span><span>${E(D.date)}</span></div></div>
 <scr${""}ipt>window.onload=()=>setTimeout(()=>window.print(),600);</scr${""}ipt></body></html>`);w.document.close();}
 function loadScript(src){return new Promise((ok,bad)=>{const s=document.createElement("script");s.src=src;s.onload=ok;s.onerror=()=>bad(new Error("Could not load "+src));document.head.appendChild(s);});}
 async function onePagerPPT(){
@@ -2295,8 +2296,10 @@ async function onePagerPPT(){
   catch(e){status("PowerPoint export needs an internet connection the first time. Use PDF (print) offline.");return;}
   const plan=await captureSitePlan(),loc=drawLocationSketch(),D=onePagerData();
   const pp=new PptxGenJS();pp.layout="LAYOUT_WIDE";const sl=pp.addSlide();sl.background={color:"F5F6F8"};const F="Aptos",FH="Aptos Display",FM="Consolas",ink="00006E",blue="00006E",surf="EEEEF7",mute="6666A8";
-  sl.addText(D.title,{x:.4,y:.25,w:12.5,h:.5,fontFace:FH,fontSize:26,bold:true,color:ink});
-  sl.addText(D.sub,{x:.4,y:.72,w:12.5,h:.3,fontFace:F,fontSize:12,color:mute});
+  sl.addText(D.title,{x:.4,y:.25,w:8.5,h:.5,fontFace:FH,fontSize:26,bold:true,color:ink});
+  sl.addText(D.sub,{x:.4,y:.72,w:8.5,h:.3,fontFace:F,fontSize:12,color:mute});
+  sl.addText("CONFIDENTIAL",{x:10.73,y:.22,w:2.2,h:.28,fontFace:FH,fontSize:10,bold:true,charSpacing:1.5,color:"FFFFFF",fill:{color:ink},align:"center",valign:"middle"});
+  sl.addText([{text:"VITRO Test Fit and Data Center Concept",options:{breakLine:true}},{text:"Business Development & Innovations"}],{x:8.4,y:.55,w:4.53,h:.45,fontFace:F,fontSize:9,bold:true,color:ink,align:"right",valign:"top"});
   sl.addShape(pp.ShapeType.rect,{x:.4,y:1.05,w:12.53,h:.04,fill:{color:blue},line:{color:blue}});
   const img=new Image();img.src=plan;await img.decode();const ar=img.width/img.height,bw=7.1,bh=4.25;
   let iw=bw,ih=bw/ar;if(ih>bh){ih=bh;iw=bh*ar;}
@@ -2313,8 +2316,8 @@ async function onePagerPPT(){
   const drows=[hdr("Straight-line distance to","km")].concat(D.dist.map(zr));
   sl.addTable(drows,{x:7.75,y:ty+.38,w:5.2,colW:[3.6,1.6],fontFace:FM,fontSize:9,color:ink,border:{type:"none"},rowH:.2,margin:.03});
   sl.addText([D.limit].concat(D.flags.map(f=>"• "+f)).join("\n"),{x:7.75,y:ty+.38+drows.length*.205+.05,w:5.2,h:.6,fontFace:F,fontSize:8,color:mute,valign:"top"});
-  sl.addText(D.bod+" · Concept test-fit only; not for design or permitting · "+D.credit+" · "+D.date,{x:.4,y:7.12,w:12.5,h:.25,fontFace:F,fontSize:8,color:mute});
-  if(D.placeholder) sl.addText("Placeholder design values: import the basis of design profile before sharing.",{x:7.75,y:.72,w:5.2,h:.3,fontFace:F,fontSize:9,color:ink,bold:true,align:"right"});
+  sl.addText("CONFIDENTIAL · "+D.bod+" · Concept test-fit only; not for design or permitting · "+D.credit+" · "+D.date,{x:.4,y:7.12,w:12.5,h:.25,fontFace:F,fontSize:8,color:mute});
+  if(D.placeholder) sl.addText("Placeholder design values: import the basis of design profile before sharing.",{x:.4,y:1.1,w:7,h:.1,fontFace:F,fontSize:8,color:ink,bold:true});
   await pp.writeFile({fileName:base()+"-one-pager.pptx"});status("Slide saved.");}
 $("btnOne").onclick=e=>{e.stopPropagation();const m=$("oneMenu");m.hidden=!m.hidden;$("btnOne").setAttribute("aria-expanded",String(!m.hidden));};
 document.addEventListener("click",()=>{$("oneMenu").hidden=true;$("btnOne").setAttribute("aria-expanded","false");});
