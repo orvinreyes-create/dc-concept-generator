@@ -160,7 +160,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <option value="infill">Infill building</option>
   </select>
   <label for="ecPos">Energy centre position</label>
-  <select id="ecPos"><option value="auto">Automatic (try both)</option><option value="side">Along the data hall (GRD)</option><option value="end">At the far end (linear)</option></select>
+  <select id="ecPos"><option value="auto">Automatic (try both)</option><option value="side">Along the data hall (GRD)</option><option value="end">At the far end (linear)</option><option value="lside">Strip along the hall (linear)</option></select>
   <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
   <label for="bandAxis">Zone bands</label>
   <select id="bandAxis">
@@ -358,6 +358,12 @@ function buildingSpec(m,o,B,dens,form){
     Lh=L;Ed=D;const Le=ecFoot/D,Ly=spill/D;Yd=0;
     Lm=apron+La+Lh+Le+Ly;H=D;const a=apron,b=a+La,c=b+Lh,e=c+Le;
     Z={apron:[0,0,a,D],admin:[a,0,b,D],hall:[b,0,c,D],ec:[c,0,e,D],yard:Ly>0?[e,0,e+Ly,D]:null};adminU=a+La/2;
+  } else if(form==="lside"){
+    /* linear bar (dock, admin, data hall in a row) with a slim energy centre
+       strip along the hall's long side: shorter than linear, narrower than GRD */
+    Lh=L;Ed=Math.max(12,ecFoot/Lh);const Ly=spill/(D+Ed);Yd=0;
+    const a=apron,b=a+La,c=b+Lh;Lm=c+Ly;H=D+Ed;
+    Z={apron:[0,0,a,D],admin:[a,0,b,D],hall:[b,0,c,D],ec:[b,D,c,D+Ed],yard:Ly>0?[c,0,c+Ly,D+Ed]:null};adminU=a+La/2;
   } else {
     Lm=Math.max(La+L,Math.sqrt((foot+adminFoot+ecFoot+spill)*1.15));
     Lh=Lm-La;
@@ -365,7 +371,7 @@ function buildingSpec(m,o,B,dens,form){
     H=Math.max(apron+D,Yd+D+Ed);
     Z={apron:[0,0,La,apron],admin:[0,apron,La,apron+D],hall:[La,Yd,Lm,Yd+D],ec:[La,Yd+D,Lm,Yd+D+Ed],yard:Yd>0?[La,0,Lm,Yd]:null};adminU=La/2;
   }
-  return {form:form==="end"?"end":"side",Z,adminU,m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
+  return {form:form==="end"?"end":form==="lside"?"lside":"side",Z,adminU,m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
     hrNeed,roofHR:Math.min(hrNeed,roofCap),roofCap,ecLevels,spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
     pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
 }
@@ -722,10 +728,11 @@ function solve(o,poly,B,coarse,hintDeg){
   const mix=(o.mix&&o.mix.length)?o.mix:null;
   const specs=[];
   const ecPosAll=o.ecPos||"auto";
-  const mkSpec=(m,d,pos)=>{const side=buildingSpec(m,o,B,d),end=buildingSpec(m,o,B,d,"end");
+  const mkSpec=(m,d,pos)=>{const side=buildingSpec(m,o,B,d),end=buildingSpec(m,o,B,d,"end"),ls=buildingSpec(m,o,B,d,"lside");
     const ecPos=(pos&&pos!=="auto")?pos:ecPosAll;
     if(ecPos==="end") return Object.assign(end,{alts:[end]});
-    return Object.assign(side,{alts:ecPos==="side"?[side]:[side,end]});};
+    if(ecPos==="lside") return Object.assign(ls,{alts:[ls]});
+    return Object.assign(side,{alts:ecPos==="side"?[side]:[side,ls,end]});};
   if(mix){ for(const b of mix) specs.push(mkSpec(b.mw,b.dens,b.ec)); }
   else { let rem=o.targetMW; const n=Math.ceil(o.targetMW/o.bldgMax);
     for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(mkSpec(m,o.density));rem-=m;} }
@@ -873,7 +880,7 @@ function solve(o,poly,B,coarse,hintDeg){
     const pins=(o.pins||[]).map(p=>rot(p,-a));
     /* clearances around a block: plant sides keep the yard clearance, the
        rest keeps a road's width */
-    const padsOf=v=>v.form==="end"?{padX:YARD_CLEAR,padTop:o.road,padBot:o.road}:{padX:o.road,padTop:v.Yd>0?YARD_CLEAR:o.road,padBot:YARD_CLEAR};
+    const padsOf=v=>v.form==="end"?{padX:YARD_CLEAR,padTop:o.road,padBot:o.road}:v.form==="lside"?{padX:o.road,padTop:o.road,padBot:YARD_CLEAR}:{padX:o.road,padTop:v.Yd>0?YARD_CLEAR:o.road,padBot:YARD_CLEAR};
     const placePinned=(s,meta,c)=>{
       for(const v of (s.alts||[s])) if(placePinnedOne(v,Object.assign({},meta,{s:v}),c)) return true;
       return false;};
@@ -1068,6 +1075,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(o.profile==="campus"&&siteArea<50000) flags.push("Site is under 5 ha, which fits the metro profile.");
   if(!r.gate) flags.push("No road reaches the boundary, so the site has no gate position.");
   if(o.subPin&&!infill&&!r.subPinned) flags.push("The substation does not fit where it is pinned, so the solver placed it freely. Move the pin.");
+  if(!infill&&L.some(s=>s.form==="lside")) flags.push(L.filter(s=>s.form==="lside").length+" building"+(L.filter(s=>s.form==="lside").length>1?"s use":" uses")+" the linear arrangement with a slim energy centre strip along the data hall. It is not the GRD module; confirm the electrical room depth and cable routing with the electrical engineer.");
   if(!infill&&L.some(s=>s.form==="end")) flags.push(L.filter(s=>s.form==="end").length+" building"+(L.filter(s=>s.form==="end").length>1?"s use":" uses")+" the linear arrangement, with the energy centre at the far end of the data hall instead of along its side. It fits a narrower plot but lengthens cable runs from the energy centre; confirm with the electrical engineer.");
   if(o.pins&&o.pins.length&&(r.pinsPlaced||0)<Math.min(o.pins.length,r.specs.length))
     flags.push((Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0))+" pinned building"+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"s do":" does")+" not fit where pinned, so the solver placed "+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"them":"it")+" freely. Move the pin or reduce the building size.");
@@ -1173,7 +1181,7 @@ adminGfa:"Floor area of the administration and support block, which holds office
 footprint:"Ground area covered by structures: data halls, admin blocks and the energy centre gantries. Loading aprons, roads, yards and the substation are open ground and are not counted. This is what the coverage limit applies to.",
 coverageRow:"Building footprint as a share of the site. Compare it with the zoning limit you entered.",
 storeysRow:"Number of floors and the resulting building height, including rooftop plant. Compare it with the height limit.",
-ecPos:"Where each campus building\u2019s energy centre sits. Along the data hall is the GRD arrangement. At the far end makes a longer, narrower linear building (dock, admin, halls, energy centre in a row) that can fit tighter plots, at the cost of longer cable runs. Automatic tries the GRD arrangement first and the linear one where it does not fit.",
+ecPos:"Where each campus building\u2019s energy centre sits. Along the data hall is the GRD arrangement. At the far end makes a longer, narrower linear building (dock, admin, halls, energy centre in a row) that can fit tighter plots, at the cost of longer cable runs. Strip along the hall keeps the linear dock-admin-hall row but puts a slim energy centre along the hall\u2019s long side, which is shorter than linear and narrower than GRD. Automatic tries the GRD arrangement first, then the strip, then linear.",
 ecFoot:"Ground area of the energy centre gantry, which houses transformers, switchgear, UPS and generators. The GRD gantry stacks plant on every floor of the building, so its footprint is the total area divided by the number of levels. It grows under EMOD and shrinks under EROOM.",
 roofHR:"Chillers on a raised deck over the data hall roof, as the GRD baseline does. The first figure is what this load needs; the second is what the roof can take, set by the profile\u2019s usable roof share. Anything beyond it goes to a ground yard.",
 fenceRow:"Length of the perimeter security fence, less the gate opening, measured at the fence line. The clear zone is a band inside the fence kept free of buildings, yards and parking so the fence can be watched and patrolled. Roads may cross it at the gate.",
@@ -1571,7 +1579,7 @@ function drawMix(){
     +'<div><label for="mixD'+i+'">Density</label><select id="mixD'+i+'" data-i="'+i+'" data-f="dens">'
     +Object.keys(DSHORT).map(k=>'<option value="'+k+'"'+(k===b.dens?" selected":"")+'>'+DSHORT[k]+'</option>').join("")
     +'</select></div><div><label for="mixE'+i+'">Energy centre</label><select id="mixE'+i+'" data-i="'+i+'" data-f="ec">'
-    +[["auto","As above"],["side","Side (GRD)"],["end","End (linear)"]].map(x=>'<option value="'+x[0]+'"'+((b.ec||"auto")===x[0]?" selected":"")+'>'+x[1]+'</option>').join("")
+    +[["auto","As above"],["side","Side (GRD)"],["end","End (linear)"],["lside","Strip (linear)"]].map(x=>'<option value="'+x[0]+'"'+((b.ec||"auto")===x[0]?" selected":"")+'>'+x[1]+'</option>').join("")
     +'</select></div><div><button class="btn" data-i="'+i+'" data-f="del" style="padding:7px 0" aria-label="Remove building '+(i+1)+'">\u00D7</button></div></div>').join("");
   box.querySelectorAll("[data-f]").forEach(el=>{
     const i=+el.dataset.i,f=el.dataset.f;
@@ -2076,7 +2084,7 @@ function ffShow(base,active,log,final,best){
     if(sp){const c=rot([(sp.r[0]+sp.r[2])/2,(sp.r[1]+sp.r[3])/2],op.a);state.ffSubLL=state.F.toLL(c);}}
   let block="";
   if(!final&&op&&op.missed&&op.missed.length){const oo=state.o,BB=effectiveBOD(oo);
-    block=op.missed.map(x=>{let h="<b>B"+(x.i+1)+"</b> ("+fmt(x.m,0)+" MW, "+(DSHORT[x.dens]||x.dens)+", "+(x.form==="end"?"linear":"GRD")+") needs about "+x.w+" \u00D7 "+x.h+" m including roads and yard clearances, and no clear area that size is left.";
+    block=op.missed.map(x=>{let h="<b>B"+(x.i+1)+"</b> ("+fmt(x.m,0)+" MW, "+(DSHORT[x.dens]||x.dens)+", "+(x.form==="end"?"linear":x.form==="lside"?"linear with side strip":"GRD")+") needs about "+x.w+" \u00D7 "+x.h+" m including roads and yard clearances, and no clear area that size is left.";
       if(x.dens==="ent"&&x.m>=36){try{const a=buildingSpec(x.m,oo,BB,"ai130",x.form);h+=" At AI 130 kW it would be about "+Math.round(a.Lm+2*oo.road)+" \u00D7 "+Math.round(a.H+(a.Yd>0?YARD_CLEAR:oo.road)+YARD_CLEAR)+" m; check the density is what you intend.";}catch(e){}}
       h+=" Options: split it into smaller buildings, add storeys, change its energy-centre position"+(oo.subPin?", or tick step 8 to let the solver move the substation":"")+".";
       return "<li>"+h+"</li>";}).join("");
