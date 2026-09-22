@@ -100,7 +100,9 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .status{font-size:13px;color:var(--muted);min-height:18px;margin-top:6px}
 .info{width:15px;height:15px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);font:600 10px/1 Barlow,sans-serif;cursor:help;padding:0;margin-left:5px;vertical-align:1px}
 .info:hover,.info:focus-visible{border-color:var(--accent);color:var(--accent)}
-#tip{position:fixed;z-index:60;max-width:270px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:8px 10px;font-size:13px;line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.src{display:inline-block;font:600 9px/1 Barlow,sans-serif;letter-spacing:.04em;padding:2px 4px;border-radius:3px;margin-left:5px;vertical-align:1px;border:1px solid currentColor}
+.src-grd{color:#1F6FA8}.src-nbcp{color:#9A5B12}.src-site{color:var(--muted)}
+#tip{white-space:pre-line;position:fixed;z-index:60;max-width:270px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:8px 10px;font-size:13px;line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.18)}
 .results td:first-child{padding-right:4px}
 .search{position:relative}
 #searchResults{position:absolute;top:100%;left:0;right:44px;margin:4px 0 0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:5px;box-shadow:0 6px 18px rgba(0,0,0,.18);max-height:260px;overflow:auto}
@@ -1147,6 +1149,16 @@ subRow:"Land set aside for the substation that connects the site to the grid. It
 pondRow:"Land set aside for stormwater retention.",
 supportRow:"Land for car parking, loading, waste and other support yards."
 };
+const SRC={kw:"GRD",sqmRack:"GRD",pue:"GRD",liquid:"GRD",rackKg:"GRD",hrPerMW:"GRD",storeys:"GRD",bldgMax:"GRD",dockApron:"GRD",roofTiers:"GRD",yardClear:"GRD",
+ setback:"NBCP",maxH:"NBCP",maxCov:"NBCP",padInSetback:"NBCP",
+ targetMW:"Site",pondPct:"Site",roadW:"Site",supportSqm:"Site",subSqm:"Site",subMargin:"Site",subAspect:"Site",subMinSide:"Site",fenceInset:"Site",clearZone:"Site"};
+const SRC_TXT={GRD:"Source: the loaded basis-of-design profile (NTT GRD).",NBCP:"Source: National Building Code of the Philippines (PD 1096) and the local zoning ordinance. Check the site\u2019s actual limits.",
+ Site:"Source: project or site assumption, neither GRD nor code."};
+function tipText(k){let t=TIP[k]||"";if(!t)return t;
+  if(SRC[k]) t+="\n\n"+SRC_TXT[SRC[k]];
+  if(NUM.includes(k)){let v=null;try{v=profileValue(k);}catch(e){}
+    if(v!=null&&v!=="") t+="\nProfile default ("+activeBOD().name+"): "+(k==="subSqm"&&!v?"0 (auto)":v)+".";}
+  return t;}
 function showTip(el,text){const t=$("tip");if(!text)return;t.textContent=text;t.hidden=false;
   const r=el.getBoundingClientRect(),w=t.offsetWidth,h=t.offsetHeight;
   let x=Math.min(window.innerWidth-w-8,Math.max(8,r.left-4)),y=r.bottom+6;
@@ -1157,16 +1169,18 @@ document.addEventListener("click",e=>{const b=e.target.closest(".info");
   if(!b){hideTip();return;}
   e.preventDefault();e.stopPropagation();
   const t=$("tip");if(!t.hidden&&t.dataset.k===b.dataset.tip){hideTip();return;}
-  t.dataset.k=b.dataset.tip;showTip(b,TIP[b.dataset.tip]);});
-document.addEventListener("mouseover",e=>{const b=e.target.closest(".info");if(b){$("tip").dataset.k=b.dataset.tip;showTip(b,TIP[b.dataset.tip]);}});
+  t.dataset.k=b.dataset.tip;showTip(b,tipText(b.dataset.tip));});
+document.addEventListener("mouseover",e=>{const b=e.target.closest(".info");if(b){$("tip").dataset.k=b.dataset.tip;showTip(b,tipText(b.dataset.tip));}});
 document.addEventListener("mouseout",e=>{const b=e.target.closest(".info");if(b&&document.activeElement!==b)hideTip();});
-document.addEventListener("focusin",e=>{const b=e.target.closest(".info");if(b)showTip(b,TIP[b.dataset.tip]);});
+document.addEventListener("focusin",e=>{const b=e.target.closest(".info");if(b)showTip(b,tipText(b.dataset.tip));});
 window.addEventListener("resize",hideTip);
 document.addEventListener("scroll",hideTip,true);
 function addTips(){
   Object.keys(TIP).forEach(k=>{
     const host=document.querySelector('label[for="'+k+'"]')||document.getElementById("lbl-"+k);
     if(!host||host.querySelector(".info"))return;
+    if(SRC[k]&&!host.querySelector(".src")){const g=document.createElement("span");g.className="src src-"+SRC[k].toLowerCase();g.textContent=SRC[k]==="Site"?"SITE":SRC[k];
+      g.title=SRC_TXT[SRC[k]];host.appendChild(g);}
     const b=document.createElement("button");b.type="button";b.className="info";b.dataset.tip=k;b.textContent="i";
     b.setAttribute("aria-label","What is "+host.textContent.trim()+"?");
     host.appendChild(b);});
@@ -1976,7 +1990,7 @@ $("ffRun").onclick=()=>{
   if(state.ring.length<3){status("Draw a site first.");return;}
   const base=readOpts(),steps=FF_STEPS.filter(x=>x.fixed||state.ffAllow[x.id]);
   const merge=list=>Object.assign({},...list.map(a=>a.patch));
-  let active=[],ctx={subArea:0},i=0,best=null,log=[],phase="up",j=-1,final=null,calls=0,est=steps.length+3;
+  let active=[],ctx={subArea:0},i=0,best=null,log=[],phase="up",j=-1,final=null,calls=0,est=steps.length+3,tq=[];
   $("ffRun").disabled=true;$("ffOut").innerHTML="";$("ffProg").hidden=false;$("ffProg").value=0;
   const tick=msg=>{$("ffStat").textContent=msg;$("ffProg").value=Math.min(0.98,calls/est);};
   const done=()=>{$("ffRun").disabled=false;$("ffProg").hidden=true;$("ffStat").textContent="";ffShow(base,active,log,final,best);};
@@ -1991,15 +2005,28 @@ $("ffRun").onclick=()=>{
         if(!best||r.it>best.it||(r.it===best.it&&r.ok))best={it:r.it,ok:r.ok,t:r.t,active:active.slice()};
         if(r.ok){final=r;phase="down";j=active.length-1;}
         step();},30);return;}
+    if(phase==="tune"){
+      /* numeric concessions: give back as much as still fits, e.g. grow the substation again */
+      while(tq.length&&tq[0].f.length===0) tq.shift();
+      if(!tq.length) return done();
+      const q=tq[0],f=q.f.shift(),raw=q.r+(q.b-q.r)*f,v=q.k==="subSqm"?Math.round(raw/100)*100:Math.round(raw*2)/2;
+      if(v===q.a.patch[q.k]){return setTimeout(step,0);}
+      const old=q.a.patch[q.k];q.a.patch[q.k]=v;
+      tick("Easing "+(FF_LABEL[q.k]?FF_LABEL[q.k][0].toLowerCase():q.k)+" back to "+(FF_LABEL[q.k]?FF_LABEL[q.k][1](v):v)+"\u2026");
+      setTimeout(()=>{const r=ffProbe(merge(active));calls++;if(r.ok){final=r;tq.shift();}else q.a.patch[q.k]=old;step();},30);return;}
     /* undo relaxations that the fit no longer needs, latest first */
     while(j>=0&&active[j].x.fixed) j--;
-    if(j<0) return done();
+    if(j<0){phase="tune";
+      const baseVal={subSqm:ctx.subArea,yardClear:base.yardClear>0?base.yardClear:15,subMargin:base.subMargin,clearZone:base.clearZone,pond:base.pond,supportSqm:base.supportSqm};
+      active.forEach(a=>Object.keys(a.patch).forEach(k=>{const b=baseVal[k],r=a.patch[k];
+        if(typeof r==="number"&&typeof b==="number"&&isFinite(b)&&b!==r) tq.push({a,k,b,r,f:[0.75,0.5,0.25]});}));
+      est=calls+tq.length*2;return step();}
     const trial=active.filter((_,k)=>k!==j),name=active[j].x.name;est=Math.max(est,calls+j+1);
     tick("Checking whether “"+name+"” is needed…");
     setTimeout(()=>{const r=ffProbe(merge(trial));calls++;if(r.ok){active=trial;final=r;}j--;step();},30);};
   step();};
 function ffShow(base,active,log,final,best){
-  const use=final?active:(best?best.active:[]),ov=Object.assign({},...use.map(a=>a.patch));state.ffOv=ov;
+  const use=final?active:(best?best.active:[]),ov=Object.assign({},...use.map(a=>Object.assign({},a.patch)));state.ffOv=ov;
   runSolve(false,true,ov,6000);const op=state.result&&state.result.options[0],t=targetOf(state.o||base);
   const rows=Object.keys(ov).map(k=>{const L=FF_LABEL[k];if(!L||L[1](base[k])===L[1](ov[k]))return"";return `<tr><td>${L[0]}</td><td>${L[1](base[k])}</td><td><b>${L[1](ov[k])}</b></td></tr>`;}).join("");
   const why=log.filter(l=>!l.skip).map(l=>`<tr><td>${esc(l.x.name)}</td><td>${fmt(l.it,0)} MW</td><td>${l.gain>0?"+"+fmt(l.gain,0):fmt(l.gain,0)} MW</td></tr>`).join("");
