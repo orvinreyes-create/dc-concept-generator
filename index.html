@@ -762,6 +762,7 @@ function solve(o,poly,B,coarse,hintDeg){
     angs.add(Math.round(t*180/Math.PI)%90);}
   if(!angs.size) angs.add(0);
   if(o.optimise&&!coarse) for(let d=0;d<90;d+=15) angs.add(d);
+  if(o.view&&!coarse&&typeof o.view.deg==="number") angs.add(o.view.deg);
   if(coarse&&hintDeg!=null&&angs.has(hintDeg)){angs.clear();angs.add(hintDeg);}
   let types=o.circulation==="auto"?["internal","perimeter","external"]:(o.circulation==="infill"?[]:[o.circulation]);
   if(o.customRoads&&o.customRoads.length) types=["custom"];
@@ -1042,6 +1043,8 @@ function solve(o,poly,B,coarse,hintDeg){
   if(wantInfill){const inf=solveInfill(o,poly,B,siteArea,[...angs]);if(inf)res.push(inf);}
   if(o.massing==="infill"||o.circulation==="infill"){const only=res.filter(r=>r.type==="infill");if(only.length)res.length=0,res.push(only[0]);}
   res.sort((p,q)=>q.score-p.score);
+  /* a saved project reopens on the orientation the user had chosen */
+  if(o.view){const k=res.findIndex(r=>r.deg===o.view.deg&&r.type===o.view.type);if(k>0)res.unshift(res.splice(k,1)[0]);}
   const top=[],usedType=new Set();
   for(const r of res){ if(top.length&&r.mw<top[0].mw*0.5) continue;
     if(usedType.has(r.type)) continue; usedType.add(r.type); top.push(r); if(top.length===3) break;}
@@ -1782,6 +1785,13 @@ function runSolve(coarse,optimise,ov,budget,probe){
   /* sessions saved before a field existed leave it blank: fill from the profile */
   NUM.forEach(id=>{if($(id).value===""){const v=profileValue(id);if(v!=null)$(id).value=v;}});
   const o=Object.assign(readOpts(),ov||{}); if(NUM.some(id=>isNaN(parseFloat($(id).value)))) return;
+  /* keep the user's chosen orientation while the inputs stay the same */
+  let view=null;
+  const sig=JSON.stringify(o);if(!probe&&!coarse)state.lastSig=sig;
+  if(!coarse&&!probe&&state.pendingView){
+    if(state.pendingView.sig==null||state.pendingView.sig===sig){state.pendingView.sig=sig;view=state.pendingView;
+      o.view=view;if(view.opt&&!optimise&&!view.done){optimise=true;budget=8000;}}
+    else state.pendingView=null;}
   if(optimise){o.optimise=true;o.optimiseUntil=Date.now()+(budget||8000);}
   const F=frame(state.ring), poly=state.ring.map(F.toM), B=effectiveBOD(o);
   o.frontPoint=o.frontLL?F.toM(o.frontLL):null;
@@ -1792,6 +1802,8 @@ function runSolve(coarse,optimise,ov,budget,probe){
     : null;
   const res=solve(o,poly,B,coarse,state.lastDeg);
   if(probe) return {res,o};
+  if(view) view.done=true;
+  if(!coarse) state.lastOpt=!!optimise;
   if(!res.options.length) return;
   const cen=F.toLL(poly.reduce((t,p)=>[t[0]+p[0]/poly.length,t[1]+p[1]/poly.length],[0,0]));
   const dist=REFS.map(r=>[r.name,fmt(haversineKm(cen,r.ll),1)+" km","distRow"]);
@@ -1998,7 +2010,7 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
   <div class="legend"><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:#6E95BD">Roof chiller deck (dashed)</span><span style="--c:${COLORS.yard}">Ground heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span>${o.fenceOn?'<span style="--c:#2F3A40">Security fence (dotted) and clear zone</span><span style="--c:#C9A27E">Guardhouse</span>':""}</div>
   <p class="hint">Interior detail appears as you zoom in: rack rows at the profile's ${fmt(B.rowPitch||6,1)} m pitch, and one electrical bay per 2 MW power stream — ${op.infill?"drawn as rooms, since an infill building holds its electrical plant inside":(o.elec==="EMOD"?"drawn as separate enclosures for EMOD":"drawn as one continuous room for EROOM")}. It shows the arrangement the basis of design fixes, not an engineered rack layout.</p>`;}
-$("btnOpt").onclick=()=>{
+$("btnOpt").onclick=()=>{state.pendingView=null;
   if(state.ring.length<3){status("Draw a site first.");return;}
   const before=state.result&&state.result.options[state.opt];
   $("btnOpt").disabled=true;$("btnOpt").textContent="Optimising\u2026";status("Searching layouts for up to 8 seconds\u2026");
@@ -2103,7 +2115,7 @@ function ffShow(base,active,log,final,best){
     if("subPinLL" in state.ffOv&&state.ffSubLL){state.subPinLL=state.ffSubLL;drawSubPin();}
     state.ffOv=null;persist();runSolve(false,true);$("ffOut").innerHTML='<p class="ok">Values applied.</p>';status("Force-fit values applied.");};
   $("ffDiscard").onclick=()=>{state.ffOv=null;$("ffOut").innerHTML="";runSolve(false);};}
-$("btnNext").onclick=()=>{if(!state.result)return;state.opt=(state.opt+1)%state.result.options.length;state.lastDeg=state.result.options[state.opt].deg;renderLayout();renderLive(false);renderSpec();};
+$("btnNext").onclick=()=>{if(!state.result)return;state.opt=(state.opt+1)%state.result.options.length;state.lastDeg=state.result.options[state.opt].deg;{const c=state.result.options[state.opt];state.pendingView={deg:c.deg,type:c.type,opt:!!state.lastOpt,sig:state.lastSig||null};}renderLayout();renderLive(false);renderSpec();persist();};
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
 /* ===== Exports ===== */
@@ -2280,8 +2292,9 @@ $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
-  return {app:"dccg",v:9,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
-function restore(p){state.profile=p.profile;state.elec=p.elec;state.density=p.density;
+  const _op=state.result&&state.result.options[state.opt];
+  return {app:"dccg",v:9,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,opt:!!p.view.opt}:null;state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
   $("circulation").value=p.circulation||"auto";$("massing").value=p.massing||"auto";$("bandAxis").value=p.bandAxis||"auto";state.frontLL=p.frontLL||null;state.roadsLL=p.roadsLL||null;state.pins=Array.isArray(p.pinsLL)?p.pinsLL.slice():[];state.psel=-1;state.pinning=false;
