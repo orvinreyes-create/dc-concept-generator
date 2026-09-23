@@ -166,6 +166,8 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <option value="modular">Campus modules</option>
     <option value="infill">Infill building</option>
   </select>
+  <label for="hrLoc">Heat rejection</label>
+  <select id="hrLoc"><option value="roof">On the roof (chiller deck)</option><option value="ground">Ground yard, detached from the building</option></select>
   <label for="ecPos">Energy centre position</label>
   <select id="ecPos"><option value="auto">Automatic (try both)</option><option value="side">Along the data hall (GRD)</option><option value="end">At the far end (linear)</option><option value="lside">Alongside the hall (compact linear)</option></select>
   <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
@@ -375,7 +377,9 @@ function buildingSpec(m,o,B,dens,form){
   const L=foot/D, adminFoot=E.admin/3, La=Math.max(18,adminFoot/D), ecLevels=(B.ecLevels>0?B.ecLevels:o.storeys), ecFoot=E.ecPerMW*m/Math.max(1,ecLevels);
   const roofShare=(B.roofShare>0&&B.roofShare<=1)?B.roofShare:0.9;
   const tiers=Math.min(2,Math.max(1,Math.round(o.roofTiers||B.roofTiers||1)));
-  const hrNeed=d.hr*m, roofCap=foot*roofShare*tiers, spill=Math.max(0,hrNeed-roofCap);
+  /* ground heat rejection: all chillers in a detached yard, none on the roof */
+  const hrG=o.hrLoc==="ground";
+  const hrNeed=d.hr*m, roofCap=hrG?0:foot*roofShare*tiers, spill=hrG?0:Math.max(0,hrNeed-roofCap);
   const apron=o.dockApron;
   let Lm,Lh,Ed,Yd,H,Z,adminU;
   if(form==="end"){
@@ -401,7 +405,7 @@ function buildingSpec(m,o,B,dens,form){
   }
   return {form:form==="end"?"end":form==="lside"?"lside":"side",Z,adminU,m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
     hrNeed,roofHR:Math.min(hrNeed,roofCap),roofCap,ecLevels,spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
-    st:o.storeys,pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
+    hrGround:hrG?hrNeed:0,st:o.storeys,pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(!hrG&&spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
 }
 
 /* ===== circulation =====
@@ -497,7 +501,7 @@ function layoutsFor(type,P,o,env,quickOnly){
 function accessDrives(placed,roads,o,P){
   const add=[];
   for(const pl of placed){
-    if(pl.kind!=="bldg"&&pl.kind!=="sub"&&pl.kind!=="support") continue;
+    if(pl.kind!=="bldg"&&pl.kind!=="sub"&&pl.kind!=="support"&&pl.kind!=="hryard") continue;
     /* a building is reached at its loading dock, not just anywhere on its wall */
     const r=(pl.kind==="bldg"&&apronRect(pl))||pl.r, c=[(r[0]+r[2])/2,(r[1]+r[3])/2];
     let near=Infinity;
@@ -978,15 +982,24 @@ function solve(o,poly,B,coarse,hintDeg){
        and placement style. Score every pass the same way the options are
        ranked, and keep the best: load first, then the substation, parking and
        retention all fitting. */
-    const scoreOf=q=>(q.subOK?1e9:0)+q.pb.mw*1e6+(q.supOK?2e5:0)+(q.pondOK?1e5:0);
+    /* detached ground heat-rejection yard(s) for the buildings placed: one yard
+       if it fits, otherwise one per building */
+    const placeHR=pb=>{const need=pb.built.map(s=>s.hrGround||0).filter(a=>a>1);if(!need.length)return true;
+      const tot=need.reduce((a,b)=>a+b,0),AS=[1,1.5,2,3,4,6,8],mg=Math.min(8,YARD_CLEAR);
+      if(placeFlex(tot,"hryard",null,mg,12,AS))return true;
+      let ok=true;for(const a of need){if(!placeFlex(a,"hryard",null,mg,12,AS)){
+        if(!(placeFlex(a/2,"hryard",null,mg,10,AS)&&placeFlex(a/2,"hryard",null,mg,10,AS)))ok=false;}}
+      return ok;};
+    const scoreOf=q=>(q.subOK?1e9:0)+q.pb.mw*1e6+(q.hrOK===false?-5e5:0)+(q.supOK?2e5:0)+(q.pondOK?1e5:0);
     const runPass=(mode,order,loose,subFirst)=>{
       placed.splice(pinFloor);
       let subOK=subFirst?placeSub():false;
       const pb=placeBuildings(mode,order,loose);
       if(!subFirst) subOK=placeSub();
+      const hrOK=placeHR(pb);
       const supOK=placeSupport(),pondOK=placePond();
-      return {pb,subOK,supOK,pondOK,items:placed.slice(pinFloor)};};
-    const full=q=>q.pb.mw>=targetMW&&q.subOK&&q.supOK&&q.pondOK;
+      return {pb,subOK,hrOK,supOK,pondOK,items:placed.slice(pinFloor)};};
+    const full=q=>q.pb.mw>=targetMW&&q.subOK&&q.hrOK!==false&&q.supOK&&q.pondOK;
     let best=runPass(undefined,undefined,false,true);
     if(fine&&!full(best)){const q=runPass(undefined,bySize,false,false);if(scoreOf(q)>scoreOf(best))best=q;}
     if(fine&&deep&&!full(best)){
@@ -1012,7 +1025,7 @@ function solve(o,poly,B,coarse,hintDeg){
           if(full(best)) break search;}}}
     placed.splice(pinFloor);best.items.forEach(q=>placed.push(q));
     const pb=best.pb,subOK=best.subOK,supOK=best.supOK,pondOK=best.pondOK;
-    return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,pinsPlaced,subPinned,subOK,pondOK,supOK};};
+    return {placed,mw:pb.mw,built:pb.built,missed:pb.missed,pinsPlaced,subPinned,subOK,pondOK,supOK,hrOK:best.hrOK!==false};};
 
   /* A layout is scored so that a buildable plan always outranks a bigger one
      that has nowhere to put its substation; then load, parking, retention,
@@ -1045,8 +1058,8 @@ function solve(o,poly,B,coarse,hintDeg){
       pl.meta.mirror=best;}
     const roads=base.concat(accessDrives(out.placed,base,o,P)),ra=roadArea(roads);
     return {deg,a,type,roads,placed:out.placed,mw:out.mw,built:out.built,missedSpecs:out.missed,phases,pinsPlaced:out.pinsPlaced,subPinned:out.subPinned,
-      subOK:out.subOK,pondOK:out.pondOK,supOK:out.supOK,cov,specs,gate,roadArea:ra,targetMW,
-      score:rank({subOK:out.subOK,mw:out.mw,supOK:out.supOK,pondOK:out.pondOK,ra})+(out.subPinned?5e8:0)+(out.pinsPlaced||0)*5e8,_ctx:{P,bb,base}};};
+      subOK:out.subOK,pondOK:out.pondOK,supOK:out.supOK,hrOK:out.hrOK,cov,specs,gate,roadArea:ra,targetMW,
+      score:rank({subOK:out.subOK,mw:out.mw,supOK:out.supOK,pondOK:out.pondOK,ra})+(out.hrOK===false?-5e5:0)+(out.subPinned?5e8:0)+(out.pinsPlaced||0)*5e8,_ctx:{P,bb,base}};};
   for(const deg of angs) for(const type of types){
     const a=deg*Math.PI/180,P=poly.map(p=>rot(p,-a));
     const xs=P.map(p=>p[0]),ys=P.map(p=>p[1]);
@@ -1105,6 +1118,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const liquidMW=sum(s=>s.m*s.liquid/100),cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
   const maxHt=L.length?Math.max(...L.map(s=>s.height)):0,flags=[];
   const heavy=L.filter(s=>s.rackKg>B.rackKgLimit);
+  if(r.hrOK===false) flags.push("The detached ground heat-rejection yard ("+fmt(L.reduce((t,s)=>t+(s.hrGround||0),0),0)+" sqm) does not fit in the space left. Try Optimise, a smaller yard clearance, or roof heat rejection.");
   if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to "+(o.subAspect>0?o.subAspect:4)+":1, no side under "+(o.subMinSide>0?o.subMinSide:30)+" m, plus a "+(o.subMargin>=0?o.subMargin:(B.subMargin>=0?B.subMargin:8))+" m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
   if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
   if(!r.supOK) flags.push("Parking and support yards ("+fmt(supportArea,0)+" sqm, tried as one yard or two, no side under 16 m) do not fit. Try Optimise, or allow for parking inside the buildings.");
@@ -1154,7 +1168,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
       ["Building coverage",fmt(r.cov,1)+"%","coverageRow"],["Storeys / height",storeysUsed+" / "+fmt(maxHt,1)+" m","storeysRow"],
       ["Energy centre footprint ("+o.elec+")",fmt(sum(s=>s.ecFoot),0)+" sqm"+(L.length&&L[0].ecLevels>1?" on "+L[0].ecLevels+" levels":""),"ecFoot"],
       ["Heat rejection on roof (chiller deck)",fmt(sum(s=>s.roofHR),0)+" of "+fmt(sum(s=>s.roofCap||0),0)+" sqm usable","roofHR"],
-      [infill?"Heat rejection on plant floor":"Heat rejection in ground yard",fmt(sum(s=>s.spill),0)+" sqm","yardHR"],
+      [infill?"Heat rejection on plant floor":"Heat rejection in ground yard",fmt(sum(s=>s.spill+(s.hrGround||0)),0)+" sqm","yardHR"],
       ["Heat to liquid",fmt(liquidMW,1)+" MW","liquidRow"],
       ["CDUs (2 MW, N+1 per building)",fmt(cdus,0),"cdus"],["ITE power streams",fmt(streams,0),"streams"],
       ["Generators ("+fmt(B.genKVA,0)+" kVA, incl. house)",fmt(gens,0),"gensRow"],
@@ -1493,6 +1507,7 @@ $("massing").onchange=()=>schedule(false);
 $("bandAxis").onchange=()=>schedule(false);
 $("faceGate").onchange=()=>schedule(false);
 $("ecPos").onchange=()=>{schedule(false);persist();};
+$("hrLoc").onchange=()=>{schedule(false);persist();};
 $("padInSetback").onchange=()=>{schedule(false);persist();};
 $("fenceOn").onchange=()=>{schedule(false);persist();};
 
@@ -1650,7 +1665,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
-    massing:$("massing").value,faceGate:$("faceGate").checked,ecPos:$("ecPos").value,subPinLL:state.subPinLL,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
+    hrLoc:$("hrLoc").value,massing:$("massing").value,faceGate:$("faceGate").checked,ecPos:$("ecPos").value,subPinLL:state.subPinLL,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
     mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear"),subAspect:g("subAspect")||4,subMinSide:g("subMinSide")||30};}
 
 /* ===== Map ===== */
@@ -2017,6 +2032,8 @@ function renderLayout(){
       const mg=Math.max(0,(o.subMargin>=0?o.subMargin:8)/2),core=[r[0]+mg,r[1]+mg,r[2]-mg,r[3]-mg];
       if(mg>0.05)box(r,"clear",null);box(core[2]>core[0]&&core[3]>core[1]?core:r,"sub",tag("Substation",m.area),m.area,HT.sub);continue;}
     if(pl.kind==="pond"){box(r,"pond",tag("Retention",m.area),m.area);continue;}
+    if(pl.kind==="hryard"){const mg=Math.min(8,(o.yardClear>0?o.yardClear:15))/2,core=[r[0]+mg,r[1]+mg,r[2]-mg,r[3]-mg];
+      box(r,"clear",null);box(core[2]>core[0]&&core[3]>core[1]?core:r,"yard",tag("Heat rejection yard",m.area),m.area,HT.yard);continue;}
     if(pl.kind==="support"){box(r,"support",tag("Parking and yards",m.area),m.area);continue;}
     box(r,"clear",null);   /* yard and road clearance around the building, kept clear */
     const s=m.s,ix=r[0]+(m.swap?m.padTop:m.padX),iy=r[1]+(m.swap?m.padX:m.padTop);
@@ -2793,7 +2810,7 @@ $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
   const _op=state.result&&state.result.options[state.opt];
-  return {app:"dccg",v:9,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:9,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,opt:!!p.view.opt}:null;state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
@@ -2801,7 +2818,7 @@ function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,op
   state.editRoads=false;state.rsel=-1;$("btnRoads").textContent="Edit roads";$("btnRoads").setAttribute("aria-pressed","false");
   $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
   $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();state.subPinning=false;drawSubPin();
-  $("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
+  $("hrLoc").value=p.hrLoc||"roof";$("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
 function drawProjects(){const l=lsGet(LS_PROJ,[]);
