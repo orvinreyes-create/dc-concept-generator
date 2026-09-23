@@ -2670,7 +2670,7 @@ function texturedParts(T){
 async function renderTextured3D(){
   const T=await loadThree();
   const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},baseWas=state.base;
-  let ground=null;try{ground=await captureGround(1.1);}catch(e){}
+  let ground=null;try{ground=await captureGround(1.7);}catch(e){}
   map.setLayoutProperty("osm","visibility",baseWas==="osm"?"visible":"none");map.setLayoutProperty("sat","visibility",baseWas==="sat"?"visible":"none");
   map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});map.redraw();
   const {buckets,mats,allP,site,XZ,op,geo,F}=texturedParts(T);
@@ -2687,8 +2687,13 @@ async function renderTextured3D(){
   const cx=(Math.min(...xs)+Math.max(...xs))/2,cz=(Math.min(...zs)+Math.max(...zs))/2,rad=Math.hypot(Math.max(...xs)-Math.min(...xs),Math.max(...zs)-Math.min(...zs))/2;
   if(ground&&ground.img){const a=XZ(ground.nw),b=XZ(ground.se),gt=new T.CanvasTexture(ground.img);gt.colorSpace=T.SRGBColorSpace;gt.anisotropy=8;
     const pl=new T.Mesh(new T.PlaneGeometry(b[0]-a[0],b[1]-a[1]),new T.MeshStandardMaterial({map:gt,roughness:1}));
-    pl.rotation.x=-Math.PI/2;pl.position.set((a[0]+b[0])/2,-.02,(a[1]+b[1])/2);pl.receiveShadow=true;S.add(pl);}
-  else{const pl=new T.Mesh(new T.PlaneGeometry(rad*8,rad*8),new T.MeshStandardMaterial({color:0x9DAE86,roughness:1}));pl.rotation.x=-Math.PI/2;pl.position.set(cx,-.02,cz);pl.receiveShadow=true;S.add(pl);}
+    pl.rotation.x=-Math.PI/2;pl.position.set((a[0]+b[0])/2,-.02,(a[1]+b[1])/2);pl.receiveShadow=true;S.add(pl);
+    /* beyond the captured imagery: a wide plane in the imagery's average colour, so no corner of the frame shows empty sky */
+    let avg=[120,130,100];try{const t=document.createElement("canvas");t.width=t.height=8;const tg=t.getContext("2d");tg.drawImage(ground.img,0,0,8,8);const px=tg.getImageData(0,0,8,8).data;
+      let r=0,g2=0,b2=0;for(let i=0;i<px.length;i+=4){r+=px[i];g2+=px[i+1];b2+=px[i+2];}avg=[r,g2,b2].map(v=>Math.round(v/64));}catch(e){}
+    const far=new T.Mesh(new T.PlaneGeometry(rad*60,rad*60),new T.MeshStandardMaterial({color:new T.Color(`rgb(${avg.join(",")})`),roughness:1}));
+    far.rotation.x=-Math.PI/2;far.position.set((a[0]+b[0])/2,-.3,(a[1]+b[1])/2);S.add(far);S.userData.avg=avg;}
+  else{const pl=new T.Mesh(new T.PlaneGeometry(rad*60,rad*60),new T.MeshStandardMaterial({color:0x9DAE86,roughness:1}));pl.rotation.x=-Math.PI/2;pl.position.set(cx,-.02,cz);pl.receiveShadow=true;S.add(pl);}
   S.add(new T.HemisphereLight(0xE8F1FF,0x6B6F5E,.9));
   const phi=pick3DView(op,geo,XZ,cx,cz,F),sun=new T.DirectionalLight(0xFFF3E0,2.4);
   /* sun over the camera's left shoulder, so the faces in view are lit */
