@@ -360,10 +360,27 @@ function pip(x,y,p){let ins=false;for(let i=0,j=p.length-1;i<p.length;j=i++){con
 function segDist(p,a,b){const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l:0;t=Math.max(0,Math.min(1,t));return Math.hypot(a[0]+t*dx-p[0],a[1]+t*dy-p[1]);}
 function segInter(a,b,c,d){const o=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);return ((o(c,d,a)>0)!==(o(c,d,b)>0))&&((o(a,b,c)>0)!==(o(a,b,d)>0));}
 function segSeg(a,b,c,d){if(segInter(a,b,c,d))return 0;return Math.min(segDist(a,c,d),segDist(b,c,d),segDist(c,a,b),segDist(d,a,b));}
+/* boundary edges with their bounding boxes, cached per polygon */
+const EDGE_CACHE=new WeakMap();
+function edgesOf(P){let e=EDGE_CACHE.get(P);if(e)return e;e=[];
+  for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];e.push([a,b,Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[0],b[0]),Math.max(a[1],b[1])]);}
+  EDGE_CACHE.set(P,e);return e;}
 function rectFits(r,P,s){const C=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]];
   for(const c of C) if(!pip(c[0],c[1],P)) return false;
-  for(let i=0;i<P.length;i++){const a=P[i],b=P[(i+1)%P.length];for(let k=0;k<4;k++) if(segSeg(C[k],C[(k+1)%4],a,b)<s) return false;}
+  /* only edges whose box comes within s of the rectangle can be too close */
+  const x0=r[0]-s,y0=r[1]-s,x1=r[2]+s,y1=r[3]+s;
+  for(const e of edgesOf(P)){if(e[2]>x1||e[4]<x0||e[3]>y1||e[5]<y0)continue;
+    if(segRectDist(e[0],e[1],r,C)<s) return false;}
   return true;}
+/* distance from a segment to an axis-aligned rectangle (0 if they touch) */
+function segRectDist(a,b,r,C){
+  const inR=p=>p[0]>=r[0]&&p[0]<=r[2]&&p[1]>=r[1]&&p[1]<=r[3];
+  if(inR(a)||inR(b))return 0;
+  for(let k=0;k<4;k++) if(segInter(a,b,C[k],C[(k+1)%4]))return 0;
+  const pr=p=>{const dx=Math.max(r[0]-p[0],0,p[0]-r[2]),dy=Math.max(r[1]-p[1],0,p[1]-r[3]);return Math.hypot(dx,dy);};
+  let m=Math.min(pr(a),pr(b));
+  for(let k=0;k<4;k++){const d=segDist(C[k],a,b);if(d<m)m=d;}
+  return m;}
 function hit(r,q,gap){gap=gap||0;return r[0]<q[2]+gap&&r[2]>q[0]-gap&&r[1]<q[3]+gap&&r[3]>q[1]-gap;}
 function rectGap(r,q){const dx=Math.max(0,Math.max(q[0]-r[2],r[0]-q[2])),dy=Math.max(0,Math.max(q[1]-r[3],r[1]-q[3]));return Math.hypot(dx,dy);}
 function area(r){return (r[2]-r[0])*(r[3]-r[1]);}
@@ -563,12 +580,7 @@ function apronRect(pl){const m=pl.meta,s=m&&m.s;if(!s||!s.Z||!s.Z.apron)return n
   return m.swap?[ix+z[1],iy+a0,ix+z[3],iy+a1]:[ix+a0,iy+z[1],ix+a1,iy+z[3]];}
 /* distance from an axis-aligned rect to a road centreline */
 function rectSeg(r,s){
-  const C=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]];
-  let m=Infinity;
-  for(let i=0;i<4;i++) m=Math.min(m,segSeg(C[i],C[(i+1)%4],s.a,s.b));
-  if(m===0) return 0;
-  if(pip(s.a[0],s.a[1],C)||pip(s.b[0],s.b[1],C)) return 0;
-  return m;}
+  return segRectDist(s.a,s.b,r,[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]]);}
 function roadArea(segs){return segs.reduce((t,s)=>t+segLen(s)*s.w,0);}
 /* The street is the edge the user picked, or the longest edge when they have not. */
 function frontEdge(P,fp){
@@ -829,8 +841,10 @@ function solve(o,poly,B,coarse,hintDeg){
        by half their pads; everything else keeps the full envelope. */
     const half=(r,m)=>{const px=m.padX/2,pt=m.padTop/2,pb=m.padBot/2;
       return m.swap?[r[0]+pt,r[1]+px,r[2]-pb,r[3]-px]:[r[0]+px,r[1]+pt,r[2]-px,r[3]-pb];};
+    let surelyIn=null;
     const free=(r,clear,self,kind)=>{
-      if(padIn){
+      if(surelyIn&&surelyIn(r)){}
+      else if(padIn){
         let core=r;
         if(self) core=self.swap?[r[0]+self.padTop,r[1]+self.padX,r[2]-self.padBot,r[3]-self.padX]:[r[0]+self.padX,r[1]+self.padTop,r[2]-self.padX,r[3]-self.padBot];
         else if(kind==="sub"){const m=subMargin/2;core=[r[0]+m,r[1]+m,r[2]-m,r[3]-m];}
@@ -842,7 +856,11 @@ function solve(o,poly,B,coarse,hintDeg){
         if(rh&&q.kind==="bldg"){ if(hit(rh,half(q.r,q.meta))) return false; }
         else if(hit(r,q.r)) return false;}
       let near=false;
-      for(const s of roads){const d=rectSeg(r,s);
+      for(const s of roads){
+        /* a road whose box is further away than any threshold cannot matter */
+        const lim=s.w/2+1+(clear!=null?clear:0);
+        if(Math.min(s.a[0],s.b[0])-lim>r[2]||Math.max(s.a[0],s.b[0])+lim<r[0]||Math.min(s.a[1],s.b[1])-lim>r[3]||Math.max(s.a[1],s.b[1])+lim<r[1]) continue;
+        const d=rectSeg(r,s);
         if(d<s.w/2+1) return false;
         if(clear!=null&&d<=s.w/2+clear) near=true;}
       return clear==null?true:near;};
@@ -867,6 +885,29 @@ function solve(o,poly,B,coarse,hintDeg){
           const ex=a[0]+t*dx-cx,ey=a[1]+t*dy-cy;d=Math.min(d,Math.sqrt(ex*ex+ey*ey));}
         if((ins?d:-d)<lim) pm[j*NX+i]=1;}
       Object.defineProperty(P,"__grid",{value:{key:pkey,m:pm},configurable:true,writable:true});}
+    /* "surely clear of the boundary" raster: a cell counts only if every point
+       in it is inside the site and at least the full setback from every edge.
+       A rectangle covered only by such cells passes the boundary checks
+       without the exact (slow) geometry test. Cached like the raster above. */
+    const skey=cs+"|"+coreNeed;
+    let SU=P.__safe&&P.__safe.key===skey?P.__safe.S:null;
+    if(!SU){const need=Math.max(envNeed,coreNeed)+hd+0.01,un=new Uint8Array(NX*NY);
+      for(let j=0;j<NY;j++) for(let i=0;i<NX;i++){
+        const cx=gx+(i+0.5)*cs,cy=gy+(j+0.5)*cs;
+        if(!pip(cx,cy,P)){un[j*NX+i]=1;continue;}
+        let ok=true;
+        for(let k=0;k<P.length;k++){const a=P[k],b=P[(k+1)%P.length];
+          const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((cx-a[0])*dx+(cy-a[1])*dy)/l:0;t=t<0?0:t>1?1:t;
+          const ex=a[0]+t*dx-cx,ey=a[1]+t*dy-cy;if(ex*ex+ey*ey<need*need){ok=false;break;}}
+        if(!ok) un[j*NX+i]=1;}
+      SU=new Int32Array((NX+1)*(NY+1));
+      for(let j=0;j<NY;j++){let row=0;for(let i=0;i<NX;i++){row+=un[j*NX+i];SU[(j+1)*(NX+1)+i+1]=SU[j*(NX+1)+i+1]+row;}}
+      Object.defineProperty(P,"__safe",{value:{key:skey,S:SU},configurable:true,writable:true});}
+    const surelyInside=r=>{
+      const i0=Math.floor((r[0]-gx)/cs),i1=Math.ceil((r[2]-gx)/cs),j0=Math.floor((r[1]-gy)/cs),j1=Math.ceil((r[3]-gy)/cs);
+      if(i0<0||j0<0||i1>NX||j1>NY) return false;
+      return SU[j1*(NX+1)+i1]-SU[j0*(NX+1)+i1]-SU[j1*(NX+1)+i0]+SU[j0*(NX+1)+i0]===0;};
+    surelyIn=surelyInside;
     const stat=pm.slice();
     /* road corridors: only the cells inside each segment's bounding box */
     for(const sg of roads){const rr=sg.w/2+1-hd;if(rr<=0)continue;
@@ -874,7 +915,7 @@ function solve(o,poly,B,coarse,hintDeg){
       for(let j=Math.max(0,Math.floor((y0-gy)/cs));j<=Math.min(NY-1,Math.floor((y1-gy)/cs));j++)
         for(let i=Math.max(0,Math.floor((x0-gx)/cs));i<=Math.min(NX-1,Math.floor((x1-gx)/cs));i++)
           if(!stat[j*NX+i]&&segDist([gx+(i+0.5)*cs,gy+(j+0.5)*cs],sg.a,sg.b)<rr) stat[j*NX+i]=1;}
-    let satKey=null,satA=null,satB=null;
+    let satKey=null,satLast=null,satA=null,satB=null;
     const buildSat=(withBldg)=>{const g=stat.slice();
       for(const q of placed){if(!withBldg&&q.kind==="bldg")continue;const r=q.r;
         const i0=Math.ceil((r[0]-gx)/cs),i1=Math.floor((r[2]-gx)/cs)-1,j0=Math.ceil((r[1]-gy)/cs),j1=Math.floor((r[3]-gy)/cs)-1;
@@ -883,9 +924,10 @@ function solve(o,poly,B,coarse,hintDeg){
       for(let j=0;j<NY;j++){let row=0;for(let i=0;i<NX;i++){row+=g[j*NX+i];S[(j+1)*(NX+1)+i+1]=S[j*(NX+1)+i+1]+row;}}
       return S;};
     const blocked=(r,isBldg)=>{
-      let key=placed.length;for(const q of placed) key=key*31+q.r[0]*7.13+q.r[1]*3.7;
-      if(key!==satKey){satKey=key;satA=buildSat(true);satB=buildSat(false);}
-      const S=isBldg?satB:satA;
+      /* the rasters only change when the placed list does: its length and last item identify it */
+      const last=placed.length?placed[placed.length-1]:null;
+      if(placed.length!==satKey||last!==satLast){satKey=placed.length;satLast=last;satA=null;satB=null;}
+      const S=isBldg?(satB||(satB=buildSat(false))):(satA||(satA=buildSat(true)));
       const i0=Math.max(0,Math.floor((r[0]-gx)/cs+1e-9)),i1=Math.min(NX,Math.ceil((r[2]-gx)/cs-1e-9));
       const j0=Math.max(0,Math.floor((r[1]-gy)/cs+1e-9)),j1=Math.min(NY,Math.ceil((r[3]-gy)/cs-1e-9));
       if(i0>=i1||j0>=j1) return false;
