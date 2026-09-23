@@ -167,7 +167,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <option value="infill">Infill building</option>
   </select>
   <label for="hrLoc">Heat rejection</label>
-  <select id="hrLoc"><option value="roof">On the roof (chiller deck)</option><option value="ground">Ground yard, detached from the building</option></select>
+  <select id="hrLoc"><option value="roof">On the roof (chiller deck)</option><option value="roofyard">Roof first, overflow to a detached yard</option><option value="ground">Ground yard, detached from the building</option></select>
   <label for="ecPos">Energy centre position</label>
   <select id="ecPos"><option value="auto">Automatic (try both)</option><option value="side">Along the data hall (GRD)</option><option value="end">At the far end (linear)</option><option value="lside">Alongside the hall (compact linear)</option></select>
   <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
@@ -369,17 +369,19 @@ function area(r){return (r[2]-r[0])*(r[3]-r[1]);}
 
 /* ===== building module ===== */
 let YARD_CLEAR=15;           /* BOD: 15 m around external electrical/mechanical yards */
-function buildingSpec(m,o,B,dens,form){
+function buildingSpec(m,o,B,dens,form,Dset){
   const d=B.density[dens],E=B.elec[o.elec];
   const racks=Math.round(m*1000/d.kw), hall=racks*d.sqmRack;
   const gross=hall*B.circFactor+E.crit*m, foot=gross/o.storeys;
-  const D=Math.max(30,Math.min(75,Math.sqrt(foot/2)));
+  const D=Dset>0?Dset:Math.max(30,Math.min(75,Math.sqrt(foot/2)));
   const L=foot/D, adminFoot=E.admin/3, La=Math.max(18,adminFoot/D), ecLevels=(B.ecLevels>0?B.ecLevels:o.storeys), ecFoot=E.ecPerMW*m/Math.max(1,ecLevels);
   const roofShare=(B.roofShare>0&&B.roofShare<=1)?B.roofShare:0.9;
   const tiers=Math.min(2,Math.max(1,Math.round(o.roofTiers||B.roofTiers||1)));
   /* ground heat rejection: all chillers in a detached yard, none on the roof */
-  const hrG=o.hrLoc==="ground";
-  const hrNeed=d.hr*m, roofCap=hrG?0:foot*roofShare*tiers, spill=hrG?0:Math.max(0,hrNeed-roofCap);
+  const hrG=o.hrLoc==="ground",hrH=o.hrLoc==="roofyard";
+  const hrNeed=d.hr*m, roofCap=hrG?0:foot*roofShare*tiers, over=hrG?0:Math.max(0,hrNeed-roofCap);
+  /* roof first; the overflow either grows the building (roof) or goes to a detached yard (roofyard) */
+  const spill=hrH?0:over;
   const apron=o.dockApron;
   let Lm,Lh,Ed,Yd,H,Z,adminU;
   if(form==="end"){
@@ -405,7 +407,7 @@ function buildingSpec(m,o,B,dens,form){
   }
   return {form:form==="end"?"end":form==="lside"?"lside":"side",Z,adminU,m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
     hrNeed,roofHR:Math.min(hrNeed,roofCap),roofCap,ecLevels,spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
-    hrGround:hrG?hrNeed:0,st:o.storeys,pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(!hrG&&spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
+    hrGround:hrG?hrNeed:(hrH?over:0),st:o.storeys,pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(!hrG&&spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
 }
 
 /* ===== circulation =====
@@ -777,10 +779,12 @@ function solve(o,poly,B,coarse,hintDeg){
   const ecPosAll=o.ecPos||"auto";
   const mkSpec=(m,d,pos,st)=>{const oo=st>0?Object.assign({},o,{storeys:Math.round(st)}):o;
     const side=buildingSpec(m,oo,B,d),end=buildingSpec(m,oo,B,d,"end"),ls=buildingSpec(m,oo,B,d,"lside");
+    /* linear forms may also run longer and slimmer, to follow a narrow strip */
+    const slim=f=>{const base=f==="end"?end:ls,out=[];for(const k of [.8,.65,.5]){const Dn=Math.round(base.D*k);if(Dn>=30&&Dn<base.D-3)out.push(buildingSpec(m,oo,B,d,f,Dn));}return out;};
     const ecPos=(pos&&pos!=="auto")?pos:ecPosAll;
-    if(ecPos==="end") return Object.assign(end,{alts:[end]});
-    if(ecPos==="lside") return Object.assign(ls,{alts:[ls]});
-    return Object.assign(side,{alts:ecPos==="side"?[side]:[side,ls,end]});};
+    if(ecPos==="end") return Object.assign(end,{alts:[end,...slim("end")]});
+    if(ecPos==="lside") return Object.assign(ls,{alts:[ls,...slim("lside")]});
+    return Object.assign(side,{alts:ecPos==="side"?[side]:[side,ls,end,...slim("lside"),...slim("end")]});};
   if(mix){ for(const b of mix) specs.push(mkSpec(b.mw,b.dens,b.ec,b.st)); }
   else { let rem=o.targetMW; const n=Math.ceil(o.targetMW/o.bldgMax);
     for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(mkSpec(m,o.density));rem-=m;} }
