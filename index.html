@@ -1911,7 +1911,7 @@ $("useBearings").onclick=()=>{try{const r=parseBearings($("bearings").value),c=m
     buildHandles();fitRing();schedule(false);persist();status(r.closure>1?`Courses do not close by ${fmt(r.closure,2)} m. Check the description.`:"Courses placed. Drag the centre handle onto the tie point.");}
   catch(e){status(e.message);}};
 $("useGeo").onclick=()=>{try{state.ring=parseCoords($("geojson").value);state.closure=0;buildHandles();fitRing();schedule(false);persist();status("Boundary loaded.");}catch(e){status(e.message);}};
-function fitRing(){const R=state.ring;if(R.length<3)return;const b=new maplibregl.LngLatBounds();R.forEach(p=>b.extend(p));map.fitBounds(b,{padding:90,maxZoom:18,duration:400});}
+function fitRing(){const R=state.ring;if(R.length<3)return;if(state.d3&&typeof PTZ!=="undefined"){PTZ.refocus();return;}const b=new maplibregl.LngLatBounds();R.forEach(p=>b.extend(p));map.fitBounds(b,{padding:90,maxZoom:18,duration:400});}
 
 /* ===== Solve scheduling ===== */
 let raf=null,pendingCoarse=true,fullTimer=null;
@@ -2261,7 +2261,11 @@ const PTZ=(()=>{
   /* the pad's buttons are also reachable by keyboard */
   pad.addEventListener("keydown",e=>{const b=e.target.closest("[data-p]");if(b&&(e.key==="Enter"||e.key===" ")){e.preventDefault();act(b.dataset.p);}});
   map.on("mousedown",stopSpin);map.on("touchstart",stopSpin);map.on("wheel",stopSpin);
-  return {show:v=>{pad.hidden=!v;if(!v)stopSpin();},stop:stopSpin};})();
+  /* opening another project in 3D keeps the camera angle, re-centres on the new site, and resumes auto-orbit if it was running */
+  const refocus=()=>{const was=!!spin;stopSpin();const b=map.getBearing(),p=map.getPitch();
+    map.easeTo({center:siteC(),bearing:b,pitch:p,zoom:fitZoom(b)-.15*(p/60),duration:700});
+    if(was)map.once("moveend",()=>{if(state.d3&&!spin)act("spin");});};
+  return {show:v=>{pad.hidden=!v;if(!v)stopSpin();},stop:stopSpin,refocus};})();
 document.addEventListener("keydown",e=>{if((e.key==="p"||e.key==="P")&&!e.ctrlKey&&!e.metaKey&&!/INPUT|SELECT|TEXTAREA/.test((e.target.tagName||""))){e.preventDefault();setPaused(!state.paused);}});
 $("btnOpt").onclick=()=>{if(state.paused)setPaused(false);state.pendingView=null;
   if(state.ring.length<3){status("Draw a site first.");return;}
