@@ -202,6 +202,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <div><label for="storeys">Storeys</label><input id="storeys" type="number" min="1" max="8"></div>
   </div>
   <label class="chk" for="padInSetback"><input type="checkbox" id="padInSetback" checked> Roads and yard clearances may use the setback</label>
+  <label class="chk" for="oneSide"><input type="checkbox" id="oneSide"> Linear buildings: road on one side only</label>
   <label class="chk" for="fenceOn"><input type="checkbox" id="fenceOn" checked> Perimeter security fence</label>
   <div class="row">
     <div><label for="fenceInset">Fence inset (m)</label><input id="fenceInset" type="number" min="0" step="0.5"></div>
@@ -803,7 +804,9 @@ function solve(o,poly,B,coarse,hintDeg){
   o._inset=envNeed;
   const pondArea=siteArea*o.pond/100, supportArea=o.supportSqm;
   const pitch=Math.max(...specs.map(s=>Math.max(s.Lm,s.H)))+2*YARD_CLEAR+o.road;
-  const env=Math.max(...specs.map(s=>Math.min(s.Lm+2*o.road,s.H+(s.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)));
+  /* road offsets follow the slimmest variant a building may take */
+  const envOf=s=>o.oneSide&&(s.form==="end"||s.form==="lside")?Math.min(s.Lm,s.H)+o.road+4:Math.min(s.Lm+2*o.road,s.H+(s.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR);
+  const env=Math.max(...specs.map(s=>Math.min(...(s.alts||[s]).map(envOf))));
 
   const angs=new Set();
   for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];
@@ -933,7 +936,10 @@ function solve(o,poly,B,coarse,hintDeg){
     const pins=(o.pins||[]).map(p=>rot(p,-a));
     /* clearances around a block: plant sides keep the yard clearance, the
        rest keeps a road's width */
-    const padsOf=v=>v.form==="end"?{padX:YARD_CLEAR,padTop:o.road,padBot:o.road}:v.form==="lside"?{padX:o.road,padTop:o.road,padBot:YARD_CLEAR}:{padX:o.road,padTop:v.Yd>0?YARD_CLEAR:o.road,padBot:YARD_CLEAR};
+    /* one-sided: a linear building keeps its road on the dock side only, with a
+       narrow maintenance strip elsewhere, as many existing sites are built */
+    const ONE=Math.max(2,Math.min(4,o.road/2));
+    const padsOf=v=>o.oneSide&&(v.form==="end"||v.form==="lside")?{padX:ONE,padTop:o.road,padBot:ONE}:v.form==="end"?{padX:YARD_CLEAR,padTop:o.road,padBot:o.road}:v.form==="lside"?{padX:o.road,padTop:o.road,padBot:YARD_CLEAR}:{padX:o.road,padTop:v.Yd>0?YARD_CLEAR:o.road,padBot:YARD_CLEAR};
     const placePinned=(s,meta,c)=>{
       for(const v of (s.alts||[s])) if(placePinnedOne(v,Object.assign({},meta,{s:v}),c)) return true;
       return false;};
@@ -990,10 +996,11 @@ function solve(o,poly,B,coarse,hintDeg){
        if it fits, otherwise one per building */
     const placeHR=pb=>{const need=pb.built.map(s=>s.hrGround||0).filter(a=>a>1);if(!need.length)return true;
       const tot=need.reduce((a,b)=>a+b,0),AS=[1,1.5,2,3,4,6,8],mg=Math.min(8,YARD_CLEAR);
-      if(placeFlex(tot,"hryard",null,mg,12,AS))return true;
-      let ok=true;for(const a of need){if(!placeFlex(a,"hryard",null,mg,12,AS)){
-        if(!(placeFlex(a/2,"hryard",null,mg,10,AS)&&placeFlex(a/2,"hryard",null,mg,10,AS)))ok=false;}}
-      return ok;};
+      /* one yard if it fits, else split into two, three or four yards */
+      for(const k of [1,2,3,4]){const mark=placed.length;let ok=true;
+        for(let j=0;j<k&&ok;j++) ok=placeFlex(tot/k,"hryard",null,mg,k>1?10:12,AS);
+        if(ok) return true;placed.splice(mark);}
+      return false;};
     const scoreOf=q=>(q.subOK?1e9:0)+q.pb.mw*1e6+(q.hrOK===false?-5e5:0)+(q.supOK?2e5:0)+(q.pondOK?1e5:0);
     const runPass=(mode,order,loose,subFirst)=>{
       placed.splice(pinFloor);
@@ -1202,6 +1209,7 @@ const $=id=>document.getElementById(id);
 /* ===== Explainers ===== */
 const TIP={
 circulation:"How roads are generated. Internal runs a spine drive through the middle with buildings either side. Perimeter runs a service loop just inside the boundary with buildings in the centre. External runs parallel drives out to the boundary, which suits phased campus expansion. Compare all three shows one option of each.",
+oneSide:"For linear and compact linear buildings: keep the road only along the loading-dock side, with a narrow maintenance strip on the other sides, instead of a road and yard clearance all round. Matches long, narrow existing sites; confirm fire-engine access with the local fire marshal.",
 padInSetback:"When on, only the structures themselves (data buildings, energy centres, substation, retention) must stay behind the setback line. Their road and yard clearances, the internal roads and the parking may use the setback band, as driveways and open hardstanding usually can. Turn off for the strictest reading, where everything stays behind the line.",
 fenceInset:"How far inside the property line the security fence runs. 0 puts it on the boundary.",
 clearZone:"A band inside the fence kept clear of everything except the gate drive, so the fence can be watched and patrolled.",
@@ -1266,7 +1274,7 @@ pondRow:"Land set aside for stormwater retention.",
 supportRow:"Land for car parking, loading, waste and other support yards."
 };
 const SRC={kw:"GRD",sqmRack:"GRD",pue:"GRD",liquid:"GRD",rackKg:"GRD",hrPerMW:"GRD",storeys:"GRD",bldgMax:"GRD",dockApron:"GRD",roofTiers:"GRD",yardClear:"GRD",
- setback:"NBCP",maxH:"NBCP",maxCov:"NBCP",padInSetback:"NBCP",
+ setback:"NBCP",maxH:"NBCP",maxCov:"NBCP",padInSetback:"NBCP",oneSide:"Site",
  targetMW:"Site",pondPct:"Site",roadW:"Site",supportSqm:"Site",subSqm:"Site",subMargin:"Site",subAspect:"Site",subMinSide:"Site",fenceInset:"Site",clearZone:"Site"};
 const SRC_TXT={GRD:"Source: the loaded basis-of-design profile (NTT GRD).",NBCP:"Source: National Building Code of the Philippines (PD 1096) and the local zoning ordinance. Check the site\u2019s actual limits.",
  Site:"Source: project or site assumption, neither GRD nor code."};
@@ -1512,6 +1520,7 @@ $("bandAxis").onchange=()=>schedule(false);
 $("faceGate").onchange=()=>schedule(false);
 $("ecPos").onchange=()=>{schedule(false);persist();};
 $("hrLoc").onchange=()=>{schedule(false);persist();};
+$("oneSide").onchange=()=>{schedule(false);persist();};
 $("padInSetback").onchange=()=>{schedule(false);persist();};
 $("fenceOn").onchange=()=>{schedule(false);persist();};
 
@@ -1669,7 +1678,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
-    hrLoc:$("hrLoc").value,massing:$("massing").value,faceGate:$("faceGate").checked,ecPos:$("ecPos").value,subPinLL:state.subPinLL,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
+    oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,massing:$("massing").value,faceGate:$("faceGate").checked,ecPos:$("ecPos").value,subPinLL:state.subPinLL,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
     mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear"),subAspect:g("subAspect")||4,subMinSide:g("subMinSide")||30};}
 
 /* ===== Map ===== */
@@ -2814,7 +2823,7 @@ $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
   const _op=state.result&&state.result.options[state.opt];
-  return {app:"dccg",v:9,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,opt:!!p.view.opt}:null;state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
@@ -2822,7 +2831,7 @@ function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,op
   state.editRoads=false;state.rsel=-1;$("btnRoads").textContent="Edit roads";$("btnRoads").setAttribute("aria-pressed","false");
   $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
   $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();state.subPinning=false;drawSubPin();
-  $("hrLoc").value=p.hrLoc||"roof";$("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
+  $("hrLoc").value=p.hrLoc||"roof";$("oneSide").checked=!!p.oneSide;$("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
 function drawProjects(){const l=lsGet(LS_PROJ,[]);
