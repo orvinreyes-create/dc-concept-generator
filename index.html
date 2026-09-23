@@ -287,7 +287,8 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <button class="btn" id="btnForce" type="button" aria-expanded="false" title="Relax design values one step at a time until the target fits, then undo what was not needed">Force fit</button>
     <button class="btn" id="btnNext" type="button">Next orientation</button>
     <span class="opmenu"><button class="btn" id="btnOne" type="button" aria-haspopup="true" aria-expanded="false">One-pager</button>
-      <span class="opmenu-list" id="oneMenu" hidden><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button></span></span>
+      <span class="opmenu-list" id="oneMenu" hidden><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button>
+        <label for="view3d" style="margin:4px 2px 0">3D view from</label><select id="view3d"><option value="gate">Gate (arrival view)</option><option value="north">North-up (matches plan)</option><option value="best">Best facade (auto)</option></select></span></span>
     <button class="btn" id="btnPNG" type="button">PNG</button>
     <button class="btn" id="btnCSV" type="button">CSV</button>
     <button class="btn" id="btnGeo" type="button">GeoJSON</button>
@@ -2392,6 +2393,22 @@ async function captureGround(zoomOut){
   const W=mc.clientWidth,H=mc.clientHeight,nw=map.unproject([0,0]),se=map.unproject([W,H]);
   vis.forEach(([k,v])=>map.setLayoutProperty(k,"visibility",v));labels.forEach(m=>m.getElement().style.visibility="");
   return ok?{img,nw:[nw.lng,nw.lat],se:[se.lng,se.lat]}:null;}
+/* camera direction for the render: azimuth phi, measured from south (+z) toward east (+x) */
+function pick3DView(op,geo,XZ,cx,cz,F){
+  const mode=state.view3d||"gate",D=Math.PI/180,off=35*D;
+  const wallsOf=[];for(const f of geo){const k=f.properties.kind;if(f.geometry.type!=="Polygon"||!(+f.properties.h>0)||!/hall|ec|admin|apron/.test(k))continue;
+    const r=f.geometry.coordinates[0].map(XZ);let A=0;for(let i=0;i+1<r.length;i++)A+=r[i][0]*r[i+1][1]-r[i+1][0]*r[i][1];
+    for(let i=0;i+1<r.length;i++){const a=r[i],b=r[i+1],L=Math.hypot(b[0]-a[0],b[1]-a[1]);if(L<1)continue;let nx=(b[1]-a[1])/L,nz=-(b[0]-a[0])/L;if(A<0){nx=-nx;nz=-nz;}
+      wallsOf.push([nx,nz,L*(+f.properties.h),(a[0]+b[0])/2,(a[1]+b[1])/2,k]);}}
+  /* front-facing wall area, with extra weight for admin fronts and docks */
+  const score=ph=>{const dx=Math.sin(ph),dz=Math.cos(ph);let s=0;for(const w of wallsOf){const d=w[0]*dx+w[1]*dz;if(d>0)s+=d*w[2]*(w[5]==="admin"||w[5]==="apron"?1.6:1);}return s;};
+  const best=list=>list.reduce((a,b)=>score(b)>score(a)?b:a);
+  const grid=(op.deg||0)*D;
+  if(mode==="north") return best([off,-off]);
+  if(mode==="best") return best([0,1,2,3].map(k=>-grid+Math.PI/4+k*Math.PI/2));
+  if(op.gate){const g=rot(op.gate.edge,op.a);/* gate in the render frame */
+    const ll=F.toLL(g),p=XZ(ll),ph=Math.atan2(p[0]-cx,p[1]-cz);return best([ph+off,ph-off]);}
+  return best([0,1,2,3].map(k=>-grid+Math.PI/4+k*Math.PI/2));}
 async function renderTextured3D(){
   const T=await loadThree();
   const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},baseWas=state.base;
@@ -2482,11 +2499,13 @@ async function renderTextured3D(){
     if(k==="pond"){cap(new T.MeshStandardMaterial({color:0x3E6A80,roughness:.15,metalness:.1}),ring,.07,6,6);}}
   /* scene */
   const Wd=1800,Hd=760,cv=document.createElement("canvas");cv.width=Wd;cv.height=Hd;
-  const R=new T.WebGLRenderer({canvas:cv,antialias:true,preserveDrawingBuffer:true});R.setSize(Wd,Hd,false);
+  const R=new T.WebGLRenderer({canvas:cv,antialias:true,preserveDrawingBuffer:true,logarithmicDepthBuffer:true});R.setSize(Wd,Hd,false);
   R.shadowMap.enabled=true;R.shadowMap.type=T.PCFSoftShadowMap;R.toneMapping=T.ACESFilmicToneMapping;R.toneMappingExposure=1.05;R.outputColorSpace=T.SRGBColorSpace;
-  const S=new T.Scene();S.background=new T.Color("#CFDDEA");S.fog=new T.Fog("#CFDDEA",900,2600);
+  const S=new T.Scene();S.background=new T.Color("#CFDDEA");
+  /* ground surfaces only receive shadows; letting them cast too makes striped acne on big sites */
+  const FLATM=new Set([mats.grass,mats.asphalt,mats.concrete,mats.gravel]);
   for(const [mat,b] of buckets){const g=new T.BufferGeometry();g.setAttribute("position",new T.Float32BufferAttribute(b.p,3));g.setAttribute("normal",new T.Float32BufferAttribute(b.n,3));g.setAttribute("uv",new T.Float32BufferAttribute(b.uv,2));
-    const m=new T.Mesh(g,mat);m.castShadow=true;m.receiveShadow=true;S.add(m);}
+    const m=new T.Mesh(g,mat);m.castShadow=!FLATM.has(mat);m.receiveShadow=true;S.add(m);}
   const xs=allP.concat(site).map(p=>p[0]),zs=allP.concat(site).map(p=>p[1]);
   const cx=(Math.min(...xs)+Math.max(...xs))/2,cz=(Math.min(...zs)+Math.max(...zs))/2,rad=Math.hypot(Math.max(...xs)-Math.min(...xs),Math.max(...zs)-Math.min(...zs))/2;
   if(ground&&ground.img){const a=XZ(ground.nw),b=XZ(ground.se),gt=new T.CanvasTexture(ground.img);gt.colorSpace=T.SRGBColorSpace;gt.anisotropy=8;
@@ -2494,12 +2513,15 @@ async function renderTextured3D(){
     pl.rotation.x=-Math.PI/2;pl.position.set((a[0]+b[0])/2,-.02,(a[1]+b[1])/2);pl.receiveShadow=true;S.add(pl);}
   else{const pl=new T.Mesh(new T.PlaneGeometry(rad*8,rad*8),new T.MeshStandardMaterial({color:0x9DAE86,roughness:1}));pl.rotation.x=-Math.PI/2;pl.position.set(cx,-.02,cz);pl.receiveShadow=true;S.add(pl);}
   S.add(new T.HemisphereLight(0xE8F1FF,0x6B6F5E,.9));
-  const sun=new T.DirectionalLight(0xFFF3E0,2.4),phi=((op.deg||0)+35)*Math.PI/180;
-  sun.position.set(cx-Math.sin(phi-1.1)*rad*1.6,rad*1.9,cz+Math.cos(phi-1.1)*rad*1.6);sun.target.position.set(cx,0,cz);
-  sun.castShadow=true;sun.shadow.mapSize.set(4096,4096);const sc=sun.shadow.camera;sc.left=sc.bottom=-rad*1.3;sc.right=sc.top=rad*1.3;sc.near=1;sc.far=rad*8;sun.shadow.bias=-0.0004;sun.shadow.normalBias=.6;
+  const phi=pick3DView(op,geo,XZ,cx,cz,F),sun=new T.DirectionalLight(0xFFF3E0,2.4);
+  /* sun over the camera's left shoulder, so the faces in view are lit */
+  sun.position.set(cx+Math.sin(phi-.75)*rad*1.6,rad*2.2,cz+Math.cos(phi-.75)*rad*1.6);sun.target.position.set(cx,0,cz);
+  sun.castShadow=true;sun.shadow.mapSize.set(4096,4096);const sc=sun.shadow.camera;sc.left=sc.bottom=-rad*1.3;sc.right=sc.top=rad*1.3;sc.near=1;sc.far=rad*8;sun.shadow.bias=-0.0006;sun.shadow.normalBias=Math.max(.6,rad/300);
   S.add(sun,sun.target);
-  const C=new T.PerspectiveCamera(30,Wd/Hd,1,rad*20),el=33*Math.PI/180,dist=rad/Math.tan(15*Math.PI/180)*.62;
+  const C=new T.PerspectiveCamera(30,Wd/Hd,Math.max(1,rad*.4),rad*20),el=38*Math.PI/180,dist=rad/Math.tan(15*Math.PI/180)*.56;
   C.position.set(cx+Math.sin(phi)*Math.cos(el)*dist,Math.sin(el)*dist,cz+Math.cos(phi)*Math.cos(el)*dist);C.lookAt(cx,rad*.02,cz);
+  /* haze only well beyond the site, scaled to its size */
+  S.fog=new T.Fog("#CFDDEA",dist*2.2,dist*6);
   R.render(S,C);
   const out=cv.toDataURL("image/jpeg",.92);
   R.dispose();buckets.forEach((b,m)=>{if(m.map)m.map.dispose();m.dispose();});
@@ -2650,6 +2672,9 @@ async function onePagerPPT(){
   await pp.writeFile({fileName:base()+"-one-pager.pptx"});status("Slide saved.");}
 $("btnOne").onclick=e=>{e.stopPropagation();const m=$("oneMenu");m.hidden=!m.hidden;$("btnOne").setAttribute("aria-expanded",String(!m.hidden));};
 document.addEventListener("click",()=>{$("oneMenu").hidden=true;$("btnOne").setAttribute("aria-expanded","false");});
+$("view3d").onclick=e=>e.stopPropagation();
+$("view3d").onchange=()=>{state.view3d=$("view3d").value;try{localStorage.setItem("dccg.view3d",state.view3d);}catch(e){}};
+try{const v=localStorage.getItem("dccg.view3d");if(v){state.view3d=v;$("view3d").value=v;}}catch(e){}
 $("btnOnePDF").onclick=()=>{$("oneMenu").hidden=true;onePagerPDF();};
 $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 
