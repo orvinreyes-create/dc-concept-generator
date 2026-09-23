@@ -285,6 +285,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     </div>
     <button type="button" class="wide" data-p="fit">Fit site</button>
     <div class="ptz-row"><button type="button" data-p="gate" title="From the gate, turned 35 degrees">Gate</button><button type="button" data-p="north" title="From the south, turned 35 degrees, matching the plan">North</button><button type="button" data-p="iso" title="45 degrees to the building grid">Iso</button></div>
+    <button type="button" class="wide" data-p="skin" aria-pressed="false" title="Cladding, louvres, glazing, roof chillers and ground finishes, as in the one-pager render">Textures</button>
     <button type="button" class="wide" data-p="spin" aria-pressed="false">Auto-orbit</button>
   </div>
   <div class="toolbar">
@@ -1940,7 +1941,9 @@ function buildDetail(op,o,B){
 
 /* the 3D view is a visibility switch, reapplied whenever layers are rebuilt */
 function apply3D(){const v=!!state.d3;
-  if(map.getLayer("layout-3d"))map.setLayoutProperty("layout-3d","visibility",v?"visible":"none");
+  const sk=v&&typeof SKIN!=="undefined"&&SKIN.on;
+  if(map.getLayer("layout-3d"))map.setLayoutProperty("layout-3d","visibility",v&&!sk?"visible":"none");
+  if(map.getLayer("skin-3d"))map.setLayoutProperty("skin-3d","visibility",sk?"visible":"none");
   /* flat things (roads, parking, retention) stay in plan; only massed zones move to 3D */
   if(map.getLayer("layout-fill")) map.setFilter("layout-fill",v?["all",["==",["geometry-type"],"Polygon"],["==",["get","h"],0]]:["==",["geometry-type"],"Polygon"]);
   ["layout-line","detail-fill","detail-line","roof-line"].forEach(k=>{if(map.getLayer(k))map.setLayoutProperty(k,"visibility",v?"none":"visible");});
@@ -2041,6 +2044,7 @@ function renderLayout(){
   const dsrc=map.getSource("detail");
   if(dsrc) dsrc.setData(buildDetail(op,o,activeBOD()));
   state.layoutGeo=feats;state.pendingLayout=!src;apply3D();
+  if(typeof SKIN!=="undefined"&&SKIN.on&&SKIN.T){clearTimeout(SKIN.t);SKIN.t=setTimeout(skinBuild,150);}
   /* never rebuild handles mid-drag: that would drop the marker being dragged */
   if(!state.dragging){ if(state.editRoads) drawRoadHandles(); if(state.pins.length) drawPinHandles(); drawSubPin(); }
   /* boundary dimensions */
@@ -2098,6 +2102,34 @@ function set3D(v){state.d3=v;const b=$("btn3D");b.setAttribute("aria-pressed",St
   map.easeTo({pitch:v?60:0,bearing:v?state.lastDeg?-state.lastDeg:-20:0,duration:600});
   status(v?"3D massing: storey heights only. Use the camera pad to orbit, tilt and zoom; right-drag also rotates.":"");}
 $("btn3D").onclick=()=>set3D(!state.d3);
+
+/* ===== Live textured 3D: the render's meshes drawn inside the map (three.js custom layer) ===== */
+const SKIN={on:false,layer:null,T:null,scene:null,camera:null,renderer:null,origin:null,scale:1,key:""};
+function skinOrigin(){const F=state.F;const cm=state.ring.map(F.toM).reduce((t,p,_,a)=>[t[0]+p[0]/a.length,t[1]+p[1]/a.length],[0,0]);return F.toLL(cm);}
+function skinBuild(){const T=SKIN.T;if(!T||!state.result)return;
+  if(SKIN.scene){SKIN.scene.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
+  const {buckets}=texturedParts(T),S=new T.Scene();
+  for(const [mat,b] of buckets){const g=new T.BufferGeometry();g.setAttribute("position",new T.Float32BufferAttribute(b.p,3));g.setAttribute("normal",new T.Float32BufferAttribute(b.n,3));g.setAttribute("uv",new T.Float32BufferAttribute(b.uv,2));S.add(new T.Mesh(g,mat));}
+  S.add(new T.HemisphereLight(0xEEF4FF,0x707564,1.25));
+  const sun=new T.DirectionalLight(0xFFF3E0,1.9);sun.position.set(-0.45,1,.55);S.add(sun);
+  const sun2=new T.DirectionalLight(0xDDE6F2,.55);sun2.position.set(.6,.5,-.7);S.add(sun2);
+  SKIN.scene=S;const o=skinOrigin();SKIN.origin=maplibregl.MercatorCoordinate.fromLngLat(o,0);SKIN.scale=SKIN.origin.meterInMercatorCoordinateUnits();map.triggerRepaint();}
+function skinLayer(){return {id:"skin-3d",type:"custom",renderingMode:"3d",
+  onAdd(m,gl){const T=SKIN.T;SKIN.camera=new T.Camera();SKIN.renderer=new T.WebGLRenderer({canvas:m.getCanvas(),context:gl,antialias:true});
+    SKIN.renderer.autoClear=false;SKIN.renderer.outputColorSpace=T.SRGBColorSpace;skinBuild();},
+  render(gl,matrix){const T=SKIN.T;if(!SKIN.scene||!SKIN.origin)return;
+    const s=SKIN.scale,O=SKIN.origin;
+    const model=new T.Matrix4().makeTranslation(O.x,O.y,O.z).scale(new T.Vector3(s,-s,s)).multiply(new T.Matrix4().makeRotationX(Math.PI/2));
+    /* model frame: x east, y up, z south; this maps to mercator x east, y south, z up */
+    SKIN.camera.projectionMatrix=new T.Matrix4().fromArray(matrix).multiply(model);
+    SKIN.renderer.resetState();SKIN.renderer.render(SKIN.scene,SKIN.camera);},
+  onRemove(){if(SKIN.renderer){SKIN.renderer.dispose();SKIN.renderer=null;}}};}
+async function setSkins(v){
+  if(v){try{SKIN.T=await loadThree();}catch(e){status("Textures need an internet connection the first time.");v=false;}}
+  SKIN.on=v;const b=document.querySelector('.ptz [data-p="skin"]');if(b)b.setAttribute("aria-pressed",String(v));
+  if(v&&!map.getLayer("skin-3d"))map.addLayer(skinLayer());
+  if(!v&&map.getLayer("skin-3d"))map.removeLayer("skin-3d");
+  apply3D();}
 /* ----- 3D camera pad: orbit around the site, tilt, zoom, presets ----- */
 const PTZ=(()=>{
   const siteC=()=>state.ring.reduce((t,p)=>[t[0]+p[0]/state.ring.length,t[1]+p[1]/state.ring.length],[0,0]);
@@ -2119,6 +2151,7 @@ const PTZ=(()=>{
       case "zoomOut":map.jumpTo({zoom:map.getZoom()-.08});break;
       case "fit":map.easeTo({center:siteC(),zoom:fitZoom(map.getBearing())-.15*(map.getPitch()/60),duration:500});break;
       case "gate":case "north":case "iso":{stopSpin();const b=presetBearing(k);map.easeTo({center:siteC(),bearing:b,pitch:58,zoom:fitZoom(b)-.1,duration:700});break;}
+      case "skin":setSkins(!SKIN.on);break;
       case "spin":if(spin){stopSpin();break;}
         document.querySelector('.ptz [data-p="spin"]').setAttribute("aria-pressed","true");
         {const c=siteC();let last=performance.now();const tick=t=>{const dt=Math.min(50,t-last);last=t;map.jumpTo({center:c,bearing:map.getBearing()+dt*.006});spin=requestAnimationFrame(tick);};spin=requestAnimationFrame(tick);}
@@ -2478,12 +2511,7 @@ function pick3DView(op,geo,XZ,cx,cz,F){
   if(op.gate){const g=rot(op.gate.edge,op.a);/* gate in the render frame */
     const ll=F.toLL(g),p=XZ(ll),ph=Math.atan2(p[0]-cx,p[1]-cz);return best([ph+off,ph-off]);}
   return best([0,1,2,3].map(k=>-grid+Math.PI/4+k*Math.PI/2));}
-async function renderTextured3D(){
-  const T=await loadThree();
-  const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},baseWas=state.base;
-  let ground=null;try{ground=await captureGround(1.1);}catch(e){}
-  map.setLayoutProperty("osm","visibility",baseWas==="osm"?"visible":"none");map.setLayoutProperty("sat","visibility",baseWas==="sat"?"visible":"none");
-  map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});map.redraw();
+function texturedParts(T){
   const F=state.F,op=state.result.options[state.opt],geo=state.layoutGeo||[];
   const cm=state.ring.map(F.toM).reduce((t,p,_,a)=>[t[0]+p[0]/a.length,t[1]+p[1]/a.length],[0,0]);
   const XZ=ll=>{const m=F.toM(ll);return [m[0]-cm[0],-(m[1]-cm[1])];};
@@ -2566,6 +2594,14 @@ async function renderTextured3D(){
     const flat={road:mats.asphalt,clear:mats.concrete,support:mats.asphalt,pond:null,apron:mats.concrete,landscape:null,spare:null}[k];
     if(flat)cap(flat,ring,LIFT[k]||.05,flat.map?flat.map.userData.su:6,flat.map?flat.map.userData.sv:6);
     if(k==="pond"){cap(new T.MeshStandardMaterial({color:0x3E6A80,roughness:.15,metalness:.1}),ring,.07,6,6);}}
+  return {buckets,mats,allP,site,XZ,op,geo,F};}
+async function renderTextured3D(){
+  const T=await loadThree();
+  const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},baseWas=state.base;
+  let ground=null;try{ground=await captureGround(1.1);}catch(e){}
+  map.setLayoutProperty("osm","visibility",baseWas==="osm"?"visible":"none");map.setLayoutProperty("sat","visibility",baseWas==="sat"?"visible":"none");
+  map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});map.redraw();
+  const {buckets,mats,allP,site,XZ,op,geo,F}=texturedParts(T);
   /* scene */
   const Wd=1800,Hd=760,cv=document.createElement("canvas");cv.width=Wd;cv.height=Hd;
   const R=new T.WebGLRenderer({canvas:cv,antialias:true,preserveDrawingBuffer:true,logarithmicDepthBuffer:true});R.setSize(Wd,Hd,false);
