@@ -21,7 +21,7 @@ h2{font:600 17px/1.2 "Barlow Condensed",sans-serif;margin:16px 0 6px}
 label{display:block;font-size:13px;color:var(--muted);margin:7px 0 3px}
 input,select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:6px 8px}
 textarea{min-height:80px;font-size:13px}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
 .seg button{flex:1;border:0;background:transparent;color:var(--ink);padding:7px 4px;font:inherit;font-size:14px;cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
@@ -66,6 +66,25 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums;padding-left:8p
 th{padding:4px 0;border-bottom:1px solid var(--line);text-align:left;font-size:12px;letter-spacing:.03em;text-transform:uppercase;opacity:.65}
 th:last-child{text-align:right}
 .opmenu{position:relative;display:inline-block}
+/* ---- panel organisation ---- */
+details.sec{border-top:1px solid var(--line);margin-top:10px;padding-top:2px}
+details.sec>summary{list-style:none;display:flex;align-items:center;gap:8px;font:600 17px/1.2 "Barlow Condensed",sans-serif;padding:8px 0 4px}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary::after{content:"\25BE";margin-left:auto;color:var(--muted);font-size:13px;transition:transform .15s}
+details.sec:not([open])>summary::after{transform:rotate(-90deg)}
+details.sec .n{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font:600 12px Barlow,sans-serif}
+details.sub{border:1px solid var(--line);border-radius:4px;padding:2px 8px 8px;margin:8px 0}
+details.sub>summary{font:600 13px Barlow,sans-serif;color:var(--accent)}
+aside h3{display:flex;align-items:baseline;justify-content:space-between;font:600 12px Barlow,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:14px 0 2px;padding-bottom:3px;border-bottom:1px dashed var(--line)}
+.tgroup{display:inline-flex;gap:0;pointer-events:auto}
+.tgroup>.btn{border-radius:0;margin-left:-1px}
+.tgroup>.btn:first-child{border-radius:4px 0 0 4px;margin-left:0}
+.tgroup>.btn:last-child{border-radius:0 4px 4px 0}
+.tgroup>.btn[hidden]{display:none}
+.opmenu-list .mh{font:600 11px Barlow,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:6px 2px 0}
+.opmenu-list .mh:first-child{margin-top:0}
+.opmenu-list{min-width:200px}
+
 #btnPause.on{background:#B7791F;color:#fff;border-color:#B7791F}
 .ptz{position:absolute;right:10px;top:120px;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px;display:flex;flex-direction:column;gap:5px;box-shadow:0 4px 14px rgba(0,0,0,.18);width:132px}
 .ptz[hidden]{display:none}.ptz-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}.ptz-row{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
@@ -84,6 +103,7 @@ body.paused .live{outline:2px dashed #B7791F;outline-offset:2px}
 .ff td,.ff th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 .ff .ok{color:#2e7d4f}.ff .bad{color:#b3412e}
 .opmenu-list{position:absolute;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:4px;z-index:20;min-width:130px}
+#oneMenu{min-width:230px;right:0;left:auto}#oneMenu button{white-space:nowrap;text-align:left}
 .opmenu-list[hidden]{display:none}
 .pnode{width:17px;height:17px;border-radius:50%;background:#fff;border:3px solid #2D6A7A;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .pnode.sel{background:#2D6A7A;border-color:#fff}
@@ -128,103 +148,113 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 <div class="app">
 <aside>
   <h1>Data center concept generator</h1>
-  <p class="hint">Draw or import a site, then drag corners. The layout re-solves as you edit. Concept test-fit only.</p>
+  <p class="hint">Draw or import a site, then drag its corners. The layout re-solves as you edit. Concept test-fit only.</p>
 
-  <h2>Basis of design</h2>
-  <select id="bodSelect" aria-label="Active basis of design profile"></select>
-  <span class="pill" id="bodPill"></span>
-  <div class="btns">
-    <button class="btn" id="bodImport" type="button">Import profile</button>
-    <button class="btn" id="bodExport" type="button">Export as CSV</button>
-  </div>
-  <div class="btns">
-    <button class="btn" id="bodTemplate" type="button">Blank CSV template</button>
-    <button class="btn" id="bodExportJson" type="button">Export as JSON</button>
-  </div>
-  <p class="hint">A profile is a spreadsheet of design values. Export the CSV, edit it in Excel, then import it back.</p>
-  <input type="file" id="bodFile" accept=".csv,.json,text/csv,application/json" hidden>
-
-  <h2>Profile<button class="reset" id="resetProfile" type="button">Reset</button></h2>
-  <label id="lbl-typology">Site typology</label>
-  <div class="seg" id="segProfile"><button data-v="metro" aria-pressed="true">Metro</button><button data-v="campus" aria-pressed="false">Campus</button></div>
-  <label for="density">Rack density</label>
-  <select id="density">
-    <option value="ent">Enterprise (8–20 kW/rack)</option>
-    <option value="ai60">AI-ready 60 kW/rack</option>
-    <option value="ai130">AI-ready 130 kW/rack</option>
-    <option value="ai200">AI-ready 200+ kW/rack</option>
-  </select>
-  <div class="row">
-    <div><label for="targetMW">Target IT (MW)</label><input id="targetMW" type="number" min="1" step="1"></div>
-    <div><label for="kw">kW per rack</label><input id="kw" type="number" min="1"></div>
-  </div>
-  <label id="lbl-elecPlant">Electrical plant</label>
-  <div class="seg" id="segElec"><button data-v="EROOM" aria-pressed="true">EROOM</button><button data-v="EMOD" aria-pressed="false">EMOD</button></div>
-  <label for="massing">Massing</label>
-  <select id="massing">
-    <option value="auto">Automatic</option>
-    <option value="modular">Campus modules</option>
-    <option value="infill">Infill building</option>
-  </select>
-  <label for="hrLoc">Heat rejection</label>
-  <select id="hrLoc"><option value="roof">On the roof (chiller deck)</option><option value="roofyard">Roof first, overflow to a detached yard</option><option value="ground">Ground yard, detached from the building</option></select>
-  <label for="ecPos">Energy centre position</label>
-  <select id="ecPos"><option value="auto">Automatic (try both)</option><option value="side">Along the data hall (GRD)</option><option value="end">At the far end (linear)</option><option value="lside">Alongside the hall (compact linear)</option></select>
-  <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
-  <label for="bandAxis">Zone bands</label>
-  <select id="bandAxis">
-    <option value="auto">Lengthwise (recommended)</option>
-    <option value="cross">Crosswise</option>
-  </select>
-  <label for="circulation">Circulation</label>
-  <select id="circulation">
-    <option value="auto">Compare all three</option>
-    <option value="internal">Internal spine</option>
-    <option value="perimeter">Perimeter loop</option>
-    <option value="external">External drives</option>
-  </select>
-
-  <h2>Buildings</h2>
-  <div id="mixRows"></div>
-  <div class="btns">
-    <button class="btn" id="mixAdd" type="button">Add building</button>
-    <button class="btn" id="mixAuto" type="button">Size automatically</button>
-  </div>
-  <p class="hint" id="mixNote"></p>
-
-  <h2>Site rules<button class="reset" id="resetRules" type="button">Reset</button></h2>
-  <div class="row">
-    <div><label for="setback">Setback (m)</label><input id="setback" type="number" min="0" step="0.5"></div>
-    <div><label for="maxH">Height limit (m)</label><input id="maxH" type="number" min="5"></div>
-  </div>
-  <div class="row">
-    <div><label for="maxCov">Max coverage (%)</label><input id="maxCov" type="number" min="5" max="100"></div>
-    <div><label for="storeys">Storeys</label><input id="storeys" type="number" min="1" max="8"></div>
-  </div>
-  <label class="chk" for="padInSetback"><input type="checkbox" id="padInSetback" checked> Roads and yard clearances may use the setback</label>
-  <label class="chk" for="oneSide"><input type="checkbox" id="oneSide"> Linear buildings: road on one side only</label>
-  <label class="chk" for="fenceOn"><input type="checkbox" id="fenceOn" checked> Perimeter security fence</label>
-  <div class="row">
-    <div><label for="fenceInset">Fence inset (m)</label><input id="fenceInset" type="number" min="0" step="0.5"></div>
-    <div><label for="clearZone">Clear zone inside fence (m)</label><input id="clearZone" type="number" min="0" step="0.5"></div>
-  </div>
-  <p class="hint">Take setbacks, height and coverage from the city zoning ordinance and the National Building Code.</p>
-  <p class="hint">Click a length on the map to make that edge the street, which sets where the gates and the loading dock go. Click it again for automatic, which uses the longest edge.</p>
-
-  <details>
-    <summary>Import a boundary</summary>
-    <label for="bearings">Title technical description, one course per line</label>
-    <textarea id="bearings" placeholder="N 12 15 E 180.00&#10;S 78 40 E 210.50&#10;S 12 15 W 180.00&#10;N 78 40 W 210.50"></textarea>
-    <button class="btn" id="useBearings" type="button" style="width:100%;margin-top:6px">Place courses at map centre</button>
-    <p class="hint">Then drag the centre handle onto the tie point.</p>
-    <label for="geojson">GeoJSON polygon, or lon,lat pairs</label>
-    <textarea id="geojson"></textarea>
-    <button class="btn" id="useGeo" type="button" style="width:100%;margin-top:6px">Use these coordinates</button>
+  <details class="sec" open>
+    <summary><span class="n">1</span>Project</summary>
+    <label for="projName">Project name</label>
+    <input id="projName" placeholder="e.g. Pasig lot A">
+    <div class="btns">
+      <button class="btn" id="saveLocal" type="button">Save on this device</button>
+      <button class="btn" id="importProj" type="button">Open project file</button>
+    </div>
+    <button class="btn" id="exportProj" type="button" style="width:100%;margin-top:6px">Export project file</button>
+    <input type="file" id="projFile" accept=".json,application/json" hidden>
+    <ul class="projects" id="projList"></ul>
   </details>
 
-  <details>
-    <summary>Adjust design values</summary>
+  <details class="sec" open>
+    <summary><span class="n">2</span>Site</summary>
+    <label id="lbl-typology">Site typology</label>
+    <div class="seg" id="segProfile"><button data-v="metro" aria-pressed="true">Metro</button><button data-v="campus" aria-pressed="false">Campus</button></div>
+    <p class="hint">Draw the boundary with <b>Draw site</b> on the map, or import it below. Click an edge length on the map to make that edge the street (gates and loading docks face it).</p>
+    <details class="sub">
+      <summary>Import a boundary</summary>
+      <label for="bearings">Title technical description, one course per line</label>
+      <textarea id="bearings" placeholder="N 12 15 E 180.00&#10;S 78 40 E 210.50&#10;S 12 15 W 180.00&#10;N 78 40 W 210.50"></textarea>
+      <button class="btn" id="useBearings" type="button" style="width:100%;margin-top:6px">Place courses at map centre</button>
+      <p class="hint">Then drag the centre handle onto the tie point.</p>
+      <label for="geojson">GeoJSON polygon, or lon,lat pairs</label>
+      <textarea id="geojson"></textarea>
+      <button class="btn" id="useGeo" type="button" style="width:100%;margin-top:6px">Use these coordinates</button>
+    </details>
+    <h3>Zoning limits<button class="reset" id="resetRules" type="button">Reset</button></h3>
+    <div class="row">
+      <div><label for="setback">Setback (m)</label><input id="setback" type="number" min="0" step="0.5"></div>
+      <div><label for="maxH">Height limit (m)</label><input id="maxH" type="number" min="5"></div>
+    </div>
+    <div class="row">
+      <div><label for="maxCov">Max coverage (%)</label><input id="maxCov" type="number" min="5" max="100"></div>
+      <div><label for="storeys">Storeys</label><input id="storeys" type="number" min="1" max="8"></div>
+    </div>
+    <label class="chk" for="padInSetback"><input type="checkbox" id="padInSetback" checked> Roads and yard clearances may use the setback</label>
+    <p class="hint">Take setbacks, height and coverage from the city zoning ordinance and the National Building Code.</p>
+    <h3>Security</h3>
+    <label class="chk" for="fenceOn"><input type="checkbox" id="fenceOn" checked> Perimeter security fence</label>
+    <div class="row">
+      <div><label for="fenceInset">Fence inset (m)</label><input id="fenceInset" type="number" min="0" step="0.5"></div>
+      <div><label for="clearZone">Clear zone inside fence (m)</label><input id="clearZone" type="number" min="0" step="0.5"></div>
+    </div>
+  </details>
+
+  <details class="sec" open>
+    <summary><span class="n">3</span>Load and buildings</summary>
+    <h3>IT load<button class="reset" id="resetProfile" type="button">Reset</button></h3>
+    <div class="row">
+      <div><label for="targetMW">Target IT (MW)</label><input id="targetMW" type="number" min="1" step="1"></div>
+      <div><label for="kw">kW per rack</label><input id="kw" type="number" min="1"></div>
+    </div>
+    <label for="density">Rack density</label>
+    <select id="density">
+      <option value="ent">Enterprise (8–20 kW/rack)</option>
+      <option value="ai60">AI-ready 60 kW/rack</option>
+      <option value="ai130">AI-ready 130 kW/rack</option>
+      <option value="ai200">AI-ready 200+ kW/rack</option>
+    </select>
+    <label id="lbl-elecPlant">Electrical plant</label>
+    <div class="seg" id="segElec"><button data-v="EROOM" aria-pressed="true">EROOM</button><button data-v="EMOD" aria-pressed="false">EMOD</button></div>
+    <h3>Building mix</h3>
+    <div id="mixRows"></div>
+    <div class="btns">
+      <button class="btn" id="mixAdd" type="button">Add building</button>
+      <button class="btn" id="mixAuto" type="button">Size automatically</button>
+    </div>
+    <p class="hint" id="mixNote"></p>
+  </details>
+
+  <details class="sec" open>
+    <summary><span class="n">4</span>Layout</summary>
+    <label for="massing">Massing</label>
+    <select id="massing">
+      <option value="auto">Automatic</option>
+      <option value="modular">Campus modules</option>
+      <option value="infill">Infill building</option>
+    </select>
+    <label for="circulation">Circulation</label>
+    <select id="circulation">
+      <option value="auto">Compare all three</option>
+      <option value="internal">Internal spine</option>
+      <option value="perimeter">Perimeter loop</option>
+      <option value="external">External drives</option>
+    </select>
+    <label for="ecPos">Energy centre position</label>
+    <select id="ecPos"><option value="auto">Automatic (try both)</option><option value="side">Along the data hall (GRD)</option><option value="end">At the far end (linear)</option><option value="lside">Alongside the hall (compact linear)</option></select>
+    <label for="hrLoc">Heat rejection</label>
+    <select id="hrLoc"><option value="roof">On the roof (chiller deck)</option><option value="roofyard">Roof first, overflow to a detached yard</option><option value="ground">Ground yard, detached from the building</option></select>
+    <label for="bandAxis">Zone bands (infill)</label>
+    <select id="bandAxis">
+      <option value="auto">Lengthwise (recommended)</option>
+      <option value="cross">Crosswise</option>
+    </select>
+    <label class="chk" for="faceGate"><input type="checkbox" id="faceGate" checked> Face entrances to the gate</label>
+    <label class="chk" for="oneSide"><input type="checkbox" id="oneSide"> Linear buildings: road on one side only</label>
+  </details>
+
+  <details class="sec">
+    <summary><span class="n">5</span>Design values</summary>
+    <p class="hint">These override the basis of design for this site only. Use Export in section 6 to keep them.</p>
     <button class="reset block" id="resetValues" type="button">Reset design values to the profile</button>
+    <h3>Racks and cooling</h3>
     <div class="row">
       <div><label for="sqmRack">Hall sqm per rack</label><input id="sqmRack" type="number" step="0.1"></div>
       <div><label for="pue">Design PUE</label><input id="pue" type="number" step="0.01"></div>
@@ -235,44 +265,49 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     </div>
     <div class="row">
       <div><label for="hrPerMW">Heat rejection sqm/MW</label><input id="hrPerMW" type="number"></div>
-      <div><label for="bldgMax">Max MW per building</label><input id="bldgMax" type="number"></div>
+      <div><label for="roofTiers">Chiller deck tiers</label><input id="roofTiers" type="number" min="1" max="2" step="1"></div>
     </div>
+    <h3>Buildings and yards</h3>
     <div class="row">
-      <div><label for="pondPct">Retention (% site)</label><input id="pondPct" type="number" step="0.5"></div>
-      <div><label for="roadW">Service road (m)</label><input id="roadW" type="number"></div>
+      <div><label for="bldgMax">Max MW per building</label><input id="bldgMax" type="number"></div>
+      <div><label for="yardClear">Yard clearance (m)</label><input id="yardClear" type="number" min="0" step="1"></div>
     </div>
     <div class="row">
       <div><label for="dockApron">Loading dock apron (m)</label><input id="dockApron" type="number"></div>
+      <div><label for="roadW">Service road (m)</label><input id="roadW" type="number"></div>
+    </div>
+    <h3>Substation</h3>
+    <div class="row">
+      <div><label for="subSqm">Area (sqm, 0 = auto)</label><input id="subSqm" type="number" min="0" step="100"></div>
+      <div><label for="subMargin">Margin (m)</label><input id="subMargin" type="number" min="0" step="1"></div>
+    </div>
+    <div class="row">
+      <div><label for="subAspect">Max aspect (x:1)</label><input id="subAspect" type="number" min="1" max="8" step="0.5"></div>
+      <div><label for="subMinSide">Min side (m)</label><input id="subMinSide" type="number" min="5" step="1"></div>
+    </div>
+    <h3>Site services</h3>
+    <div class="row">
+      <div><label for="pondPct">Retention (% site)</label><input id="pondPct" type="number" step="0.5"></div>
       <div><label for="supportSqm">Parking and yards (sqm)</label><input id="supportSqm" type="number" min="0" step="100"></div>
     </div>
-    <div class="row">
-      <div><label for="subSqm">Substation (sqm, 0 = auto)</label><input id="subSqm" type="number" min="0" step="100"></div>
-      <div><label for="subMargin">Substation margin (m)</label><input id="subMargin" type="number" min="0" step="1"></div>
-    </div>
-    <div class="row">
-      <div><label for="subAspect">Substation max aspect (x:1)</label><input id="subAspect" type="number" min="1" max="8" step="0.5"></div>
-      <div><label for="subMinSide">Substation min side (m)</label><input id="subMinSide" type="number" min="5" step="1"></div>
-    </div>
-    <div class="row">
-      <div><label for="roofTiers">Chiller deck tiers</label><input id="roofTiers" type="number" min="1" max="2" step="1"></div>
-      <div><label for="yardClear">Yard clearance (m)</label><input id="yardClear" type="number" min="0" step="1"></div>
-    </div>
-    <p class="hint">These override the profile for this site only. Use Export profile to keep them.</p>
   </details>
 
-  <details open>
-    <summary>Projects</summary>
-    <label for="projName">Project name</label>
-    <input id="projName" placeholder="e.g. Pasig lot A">
+  <details class="sec">
+    <summary><span class="n">6</span>Basis of design</summary>
+    <select id="bodSelect" aria-label="Active basis of design profile"></select>
+    <span class="pill" id="bodPill"></span>
     <div class="btns">
-      <button class="btn" id="saveLocal" type="button">Save on this device</button>
-      <button class="btn" id="exportProj" type="button">Export project file</button>
+      <button class="btn" id="bodImport" type="button">Import profile</button>
+      <button class="btn" id="bodExport" type="button">Export as CSV</button>
     </div>
-    <button class="btn" id="importProj" type="button" style="width:100%;margin-top:6px">Open project file</button>
-    <input type="file" id="projFile" accept=".json,application/json" hidden>
-    <ul class="projects" id="projList"></ul>
-    <div class="status" id="status" role="status"></div>
+    <div class="btns">
+      <button class="btn" id="bodTemplate" type="button">Blank CSV template</button>
+      <button class="btn" id="bodExportJson" type="button">Export as JSON</button>
+    </div>
+    <p class="hint">A profile is a spreadsheet of design values. Export the CSV, edit it in Excel, then import it back.</p>
+    <input type="file" id="bodFile" accept=".csv,.json,text/csv,application/json" hidden>
   </details>
+  <div class="status" id="status" role="status"></div>
 </aside>
 
 <div class="mapwrap">
@@ -293,28 +328,18 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
   </div>
   <div class="toolbar">
     <form class="search" id="searchForm" autocomplete="off"><input id="searchQ" placeholder="Search a place in the Philippines" aria-label="Search place" role="combobox" aria-expanded="false" aria-controls="searchResults" autocomplete="off"><button class="btn" type="submit">Search</button><ul id="searchResults" hidden></ul></form>
-    <button class="btn" id="btnDraw" type="button" aria-pressed="false">Draw site</button>
-    <button class="btn" id="btnFinish" type="button" hidden>Finish</button>
-    <button class="btn" id="btnRemove" type="button" disabled>Remove corner</button>
-    <button class="btn" id="btnRoads" type="button" aria-pressed="false">Edit roads</button>
-    <button class="btn" id="btnRoadsReset" type="button" hidden>Auto roads</button>
-    <button class="btn" id="btnPin" type="button" aria-pressed="false">Pin building</button>
-    <button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button>
-    <button class="btn" id="btnSubPin" type="button" aria-pressed="false">Pin substation</button>
-    <button class="btn" id="btnBase" type="button">Satellite</button>
-    <button class="btn" id="btn3D" type="button" aria-pressed="false" title="Extrude the layout to storey heights and tilt the view. Massing only: no facades or equipment.">3D</button>
-    <button class="btn" id="btnPause" type="button" aria-pressed="false" title="Stop re-solving while you edit; the site outline and roads still move. Press again (or P) to solve once with every change.">Pause solving</button>
-    <button class="btn" id="btnOpt" type="button" title="Search harder: every building order, packing style and road frontage, for up to 8 seconds">Optimise</button>
-    <button class="btn" id="btnForce" type="button" aria-expanded="false" title="Relax design values one step at a time until the target fits, then undo what was not needed">Force fit</button>
-    <button class="btn" id="btnNext" type="button">Next orientation</button>
-    <span class="opmenu"><button class="btn" id="btnOne" type="button" aria-haspopup="true" aria-expanded="false">One-pager</button>
-      <span class="opmenu-list" id="oneMenu" hidden><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button>
-        <label for="view3d" style="margin:4px 2px 0">3D view from</label><select id="view3d"><option value="gate">Gate (arrival view)</option><option value="north">North-up (matches plan)</option><option value="best">Best facade (auto)</option></select></span></span>
-    <button class="btn" id="btnPNG" type="button">PNG</button>
-    <button class="btn" id="btnCSV" type="button">CSV</button>
-    <button class="btn" id="btnGeo" type="button">GeoJSON</button>
-    <span class="opmenu"><button class="btn" id="btnModel" type="button" aria-haspopup="true" aria-expanded="false" title="Massing model for Blender, Rhino, SketchUp or a 3D viewer">3D model</button>
-      <span class="opmenu-list" id="modelMenu" hidden><button class="btn" id="btnGLB" type="button">GLB (single file)</button><button class="btn" id="btnOBJ" type="button">OBJ + MTL</button></span></span>
+    <span class="tgroup" aria-label="Edit"><button class="btn" id="btnDraw" type="button" aria-pressed="false">Draw site</button><button class="btn" id="btnFinish" type="button" hidden>Finish</button><button class="btn" id="btnRemove" type="button" disabled>Remove corner</button><button class="btn" id="btnRoads" type="button" aria-pressed="false">Edit roads</button><button class="btn" id="btnRoadsReset" type="button" hidden>Auto roads</button></span>
+    <span class="tgroup" aria-label="Pins"><button class="btn" id="btnPin" type="button" aria-pressed="false">Pin building</button><button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button><button class="btn" id="btnSubPin" type="button" aria-pressed="false">Pin substation</button></span>
+    <span class="tgroup" aria-label="Solve"><button class="btn" id="btnPause" type="button" aria-pressed="false" title="Stop re-solving while you edit; the site outline and roads still move. Press again (or P) to solve once with every change.">Pause solving</button><button class="btn" id="btnOpt" type="button" title="Search harder: every building order, packing style and road frontage, for up to 8 seconds">Optimise</button><button class="btn" id="btnForce" type="button" aria-expanded="false" title="Relax design values one step at a time until the target fits, then undo what was not needed">Force fit</button><button class="btn" id="btnNext" type="button">Next orientation</button></span>
+    <span class="tgroup" aria-label="View"><button class="btn" id="btnBase" type="button">Satellite</button><button class="btn" id="btn3D" type="button" aria-pressed="false" title="Extrude the layout to storey heights and tilt the view. Massing only: no facades or equipment.">3D</button></span>
+    <span class="opmenu"><button class="btn" id="btnOne" type="button" aria-haspopup="true" aria-expanded="false">Export &#9662;</button>
+      <span class="opmenu-list" id="oneMenu" hidden>
+        <span class="mh">One-pager</span><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button>
+        <label for="view3d" style="margin:4px 2px 0">3D view from</label><select id="view3d"><option value="gate">Gate (arrival view)</option><option value="north">North-up (matches plan)</option><option value="best">Best facade (auto)</option></select>
+        <span class="mh">Drawings and data</span><button class="btn" id="btnPNG" type="button">Site plan (PNG)</button><button class="btn" id="btnCSV" type="button">Spec sheet (CSV)</button><button class="btn" id="btnGeo" type="button">Layout (GeoJSON)</button>
+        <span class="mh">3D model</span><button class="btn" id="btnGLB" type="button">GLB (single file)</button><button class="btn" id="btnOBJ" type="button">OBJ + MTL</button>
+      </span></span>
+    <span hidden><button id="btnModel" type="button"></button><span id="modelMenu" hidden></span></span>
   </div>
   <div class="drawhint" id="drawHint" hidden>Click the map to place corners. Press Finish when done.</div>
   <div class="ff" id="ffPanel" hidden>
@@ -1729,7 +1754,7 @@ const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,
     osm:{type:"raster",tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],tileSize:256,maxzoom:19,attribution:"© OpenStreetMap contributors"},
     sat:{type:"raster",tiles:["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],tileSize:256,maxzoom:19,attribution:"Imagery © Esri, Maxar, Earthstar Geographics"}},
     layers:[{id:"osm",type:"raster",source:"osm"},{id:"sat",type:"raster",source:"sat",layout:{visibility:"none"}}]}});
-map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"top-right");
+map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"bottom-right");
 map.addControl(new maplibregl.ScaleControl({unit:"metric"}),"bottom-right");
 const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)"};
 const EMPTY={type:"FeatureCollection",features:[]};
