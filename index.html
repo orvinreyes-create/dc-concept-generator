@@ -1629,7 +1629,7 @@ map.on("load",()=>{
   map.addSource("site",{type:"geojson",data:EMPTY});
   map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":0.9}});
   map.addLayer({id:"layout-fill",type:"fill",source:"layout",filter:["==",["geometry-type"],"Polygon"],paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":1}});
-  map.addLayer({id:"layout-line",type:"line",source:"layout",filter:["!",["in",["get","kind"],["literal",["roofhr","fence","clearzone"]]]],paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
+  map.addLayer({id:"layout-line",type:"line",source:"layout",filter:["!",["in",["get","kind"],["literal",["roofhr","fence","clearzone","clear"]]]],paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
   map.addLayer({id:"roof-line",type:"line",source:"layout",filter:["==",["get","kind"],"roofhr"],
     paint:{"line-color":"#1F5F99","line-width":1.6,"line-dasharray":[2.5,1.5]}});
   map.addSource("detail",{type:"geojson",data:EMPTY});
@@ -1972,7 +1972,9 @@ function renderLayout(){
   }
   for(const pl of op.placed){
     const r=pl.r,m=pl.meta;
-    if(pl.kind==="sub"){box(r,"sub",tag("Substation",m.area),m.area,HT.sub);continue;}
+    if(pl.kind==="sub"){/* the plot carries its fence margin: drawn as clearance around the substation itself */
+      const mg=Math.max(0,(o.subMargin>=0?o.subMargin:8)/2),core=[r[0]+mg,r[1]+mg,r[2]-mg,r[3]-mg];
+      if(mg>0.05)box(r,"clear",null);box(core[2]>core[0]&&core[3]>core[1]?core:r,"sub",tag("Substation",m.area),m.area,HT.sub);continue;}
     if(pl.kind==="pond"){box(r,"pond",tag("Retention",m.area),m.area);continue;}
     if(pl.kind==="support"){box(r,"support",tag("Parking and yards",m.area),m.area);continue;}
     box(r,"clear",null);   /* yard and road clearance around the building, kept clear */
@@ -2297,7 +2299,7 @@ function captureSitePlan(){return new Promise(async res=>{
           g.fillStyle=COLORS.clearzone;g.fill("evenodd");continue;}
         if(k==="roofhr")continue;
         ring(f.geometry.coordinates[0]);g.fillStyle=COLORS[k]||"#ccc";g.fill();
-        if(k!=="road"){g.strokeStyle="rgba(29,43,54,.55)";g.lineWidth=.8*d;g.stroke();}}
+        if(k!=="road"&&k!=="clear"){g.strokeStyle="rgba(29,43,54,.55)";g.lineWidth=.8*d;g.stroke();}}
       /* interior detail: rack rows and electrical bays */
       try{const det=buildDetail(op,state.o,activeBOD());g.strokeStyle="rgba(255,255,255,.55)";g.lineWidth=.7*d;g.strokeStyle="rgba(29,43,54,.35)";
         for(const f of det.features){if(f.geometry.type==="LineString"){g.beginPath();f.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});g.stroke();}
