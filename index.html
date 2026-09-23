@@ -382,7 +382,7 @@ function buildingSpec(m,o,B,dens,form){
   }
   return {form:form==="end"?"end":form==="lside"?"lside":"side",Z,adminU,m,dens,kw:d.kw,racks,hall,gross,foot,D,L:Lh,La,Lm,H,adminFoot,ecFoot,Ed,
     hrNeed,roofHR:Math.min(hrNeed,roofCap),roofCap,ecLevels,spill,Yd,apron,liquid:d.liquid,rackKg:d.rackKg,
-    pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
+    st:o.storeys,pue:B.pue[o.profile][dens],height:o.storeys*B.floorM+(spill<hrNeed?B.roofPlantM*tiers:0)+1.5};
 }
 
 /* ===== circulation =====
@@ -737,12 +737,13 @@ function solve(o,poly,B,coarse,hintDeg){
   const mix=(o.mix&&o.mix.length)?o.mix:null;
   const specs=[];
   const ecPosAll=o.ecPos||"auto";
-  const mkSpec=(m,d,pos)=>{const side=buildingSpec(m,o,B,d),end=buildingSpec(m,o,B,d,"end"),ls=buildingSpec(m,o,B,d,"lside");
+  const mkSpec=(m,d,pos,st)=>{const oo=st>0?Object.assign({},o,{storeys:Math.round(st)}):o;
+    const side=buildingSpec(m,oo,B,d),end=buildingSpec(m,oo,B,d,"end"),ls=buildingSpec(m,oo,B,d,"lside");
     const ecPos=(pos&&pos!=="auto")?pos:ecPosAll;
     if(ecPos==="end") return Object.assign(end,{alts:[end]});
     if(ecPos==="lside") return Object.assign(ls,{alts:[ls]});
     return Object.assign(side,{alts:ecPos==="side"?[side]:[side,ls,end]});};
-  if(mix){ for(const b of mix) specs.push(mkSpec(b.mw,b.dens,b.ec)); }
+  if(mix){ for(const b of mix) specs.push(mkSpec(b.mw,b.dens,b.ec,b.st)); }
   else { let rem=o.targetMW; const n=Math.ceil(o.targetMW/o.bldgMax);
     for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(mkSpec(m,o.density));rem-=m;} }
   const targetMW=specs.reduce((t,s)=>t+s.m,0);
@@ -1063,7 +1064,8 @@ function solve(o,poly,B,coarse,hintDeg){
 
 function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const L=r.built,sum=f=>L.reduce((t,s)=>t+f(s),0),it=r.mw,infill=r.type==="infill";
-  const storeysUsed=r.storeys||o.storeys;
+  const stSet=[...new Set(L.map(s=>s.st||o.storeys))].sort((a,b)=>a-b);
+  const storeysUsed=r.storeys||(stSet.length>1?stSet.join("\u2013"):(stSet[0]||o.storeys));
   const fac=sum(s=>s.m*s.pue), pueEff=it?fac/it:0;
   const streams=sum(s=>Math.ceil(s.m/B.moduleMW)*B.gensPerModule),gens=streams+L.length;
   const liquidMW=sum(s=>s.m*s.liquid/100),cdus=liquidMW>0?Math.ceil(liquidMW/2)+L.length:0;
@@ -1586,17 +1588,17 @@ $("btnSubPin").onclick=()=>{
 const DSHORT={ent:"Enterprise",ai60:"AI 60 kW",ai130:"AI 130 kW",ai200:"AI 200 kW"};
 function drawMix(){
   const box=$("mixRows");
-  box.innerHTML=state.mix.map((b,i)=>'<div class="row" style="grid-template-columns:56px 1fr 1fr 28px;align-items:end;margin-bottom:5px">'
+  box.innerHTML=state.mix.map((b,i)=>'<div class="row" style="grid-template-columns:50px 1fr 1fr 46px 26px;gap:5px;align-items:end;margin-bottom:5px">'
     +'<div><label for="mixMW'+i+'">B'+(i+1)+' MW</label><input id="mixMW'+i+'" type="number" min="1" value="'+b.mw+'" data-i="'+i+'" data-f="mw"></div>'
     +'<div><label for="mixD'+i+'">Density</label><select id="mixD'+i+'" data-i="'+i+'" data-f="dens">'
     +Object.keys(DSHORT).map(k=>'<option value="'+k+'"'+(k===b.dens?" selected":"")+'>'+DSHORT[k]+'</option>').join("")
     +'</select></div><div><label for="mixE'+i+'">Energy centre</label><select id="mixE'+i+'" data-i="'+i+'" data-f="ec">'
     +[["auto","As above"],["side","Side (GRD)"],["end","End (linear)"],["lside","Compact linear"]].map(x=>'<option value="'+x[0]+'"'+((b.ec||"auto")===x[0]?" selected":"")+'>'+x[1]+'</option>').join("")
-    +'</select></div><div><button class="btn" data-i="'+i+'" data-f="del" style="padding:7px 0" aria-label="Remove building '+(i+1)+'">\u00D7</button></div></div>').join("");
+    +'</select></div><div><label for="mixS'+i+'" title="Storeys for this building; blank uses the Storeys setting">Floors</label><input id="mixS'+i+'" type="number" min="1" max="8" placeholder="'+(+$("storeys").value||"")+'" value="'+(b.st>0?b.st:"")+'" data-i="'+i+'" data-f="st"></div><div><button class="btn" data-i="'+i+'" data-f="del" style="padding:7px 0" aria-label="Remove building '+(i+1)+'">\u00D7</button></div></div>').join("");
   box.querySelectorAll("[data-f]").forEach(el=>{
     const i=+el.dataset.i,f=el.dataset.f;
     if(f==="del") el.onclick=()=>{state.mix.splice(i,1);drawMix();schedule(false);persist();};
-    else el.onchange=()=>{state.mix[i][f]=f==="mw"?Math.max(1,+el.value||1):el.value;drawMix();schedule(false);persist();};});
+    else el.onchange=()=>{state.mix[i][f]=f==="mw"?Math.max(1,+el.value||1):f==="st"?(+el.value>0?Math.min(8,Math.round(+el.value)):0):el.value;drawMix();schedule(false);persist();};});
   const tot=state.mix.reduce((t,b)=>t+b.mw,0);
   $("mixNote").textContent=state.mix.length
     ? "Mix of "+state.mix.length+" buildings, "+fmt(tot,0)+" MW total. The target field above is ignored while a mix is set."
@@ -1984,7 +1986,7 @@ function renderLayout(){
     const part=(u0,v0,u1,v1,kind,label,ar,hh,bb)=>{const a0=Math.min(U(u0),U(u1)),a1=Math.max(U(u0),U(u1));
       box(m.swap?[ix+v0,iy+a0,ix+v1,iy+a1]:[ix+a0,iy+v0,ix+a1,iy+v1],kind,label,ar,hh,bb);};
     const Z=s.Z,zp=(z,kind,label,ar,hh,bb)=>{if(z)part(z[0],z[1],z[2],z[3],kind,label,ar,hh,bb);};
-    const hallH=o.storeys*FLR,ecH=Math.max(1,s.ecLevels||1)*FLR;
+    const stB=s.st||o.storeys,hallH=stB*FLR,ecH=Math.max(1,s.ecLevels||1)*FLR;
     zp(Z.yard,"yard",tag("Heat rejection",s.spill),s.spill,HT.yard);
     zp(Z.hall,"hall",tag("B"+(m.i+1)+" "+fmt(s.m,0)+" MW \u00B7 "+DSHORT[s.dens],s.L*s.D)
       +'<br><span style="font-weight:400;opacity:.75">roof chillers '+sq(s.roofHR)+'</span>',s.L*s.D,hallH);
@@ -1994,7 +1996,7 @@ function renderLayout(){
       part(h[2]-(h[2]-h[0])*f+ins,h[1]+ins,h[2]-ins,h[3]-ins,"roofhr",null,undefined,hallH+PLANT,hallH);}
     zp(Z.ec,"ec",tag("Energy centre",s.ecFoot),s.ecFoot,ecH);
     zp(Z.apron,"apron",tag("Loading dock",(Z.apron[2]-Z.apron[0])*(Z.apron[3]-Z.apron[1])),(Z.apron[2]-Z.apron[0])*(Z.apron[3]-Z.apron[1]),HT.apron);
-    zp(Z.admin,"admin",tag("Admin",s.adminFoot),s.adminFoot,HT.admin);
+    zp(Z.admin,"admin",tag("Admin",s.adminFoot),s.adminFoot,Math.min(3,stB)*FLR);
   }
   /* clearances sit under everything else, roads included */
   {const cl=feats.filter(f=>f.properties.kind==="clear"),rest=feats.filter(f=>f.properties.kind!=="clear");feats.length=0;feats.push(...cl,...rest);}
