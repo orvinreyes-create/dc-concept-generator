@@ -1622,7 +1622,7 @@ const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,
     layers:[{id:"osm",type:"raster",source:"osm"},{id:"sat",type:"raster",source:"sat",layout:{visibility:"none"}}]}});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"top-right");
 map.addControl(new maplibregl.ScaleControl({unit:"metric"}),"bottom-right");
-const COLORS={hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)"};
+const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)"};
 const EMPTY={type:"FeatureCollection",features:[]};
 map.on("load",()=>{
   map.addSource("layout",{type:"geojson",data:EMPTY});
@@ -1975,6 +1975,7 @@ function renderLayout(){
     if(pl.kind==="sub"){box(r,"sub",tag("Substation",m.area),m.area,HT.sub);continue;}
     if(pl.kind==="pond"){box(r,"pond",tag("Retention",m.area),m.area);continue;}
     if(pl.kind==="support"){box(r,"support",tag("Parking and yards",m.area),m.area);continue;}
+    box(r,"clear",null);   /* yard and road clearance around the building, kept clear */
     const s=m.s,ix=r[0]+(m.swap?m.padTop:m.padX),iy=r[1]+(m.swap?m.padX:m.padTop);
     const span=m.swap?(r[3]-r[1])-m.padTop-m.padBot:(r[2]-r[0])-2*m.padX;
     const U=u=>m.mirror?s.Lm-u:u;   /* mirror puts the entrance side toward the gate */
@@ -1993,6 +1994,8 @@ function renderLayout(){
     zp(Z.apron,"apron",tag("Loading dock",(Z.apron[2]-Z.apron[0])*(Z.apron[3]-Z.apron[1])),(Z.apron[2]-Z.apron[0])*(Z.apron[3]-Z.apron[1]),HT.apron);
     zp(Z.admin,"admin",tag("Admin",s.adminFoot),s.adminFoot,HT.admin);
   }
+  /* clearances sit under everything else, roads included */
+  {const cl=feats.filter(f=>f.properties.kind==="clear"),rest=feats.filter(f=>f.properties.kind!=="clear");feats.length=0;feats.push(...cl,...rest);}
   const src=map.getSource("layout");
   if(src) src.setData({type:"FeatureCollection",features:feats});
   const dsrc=map.getSource("detail");
@@ -2042,7 +2045,7 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   <table>${op.rows.map(r=>`<tr><td>${r[0]}${r[2]&&TIP[r[2]]?`<button type="button" class="info" data-tip="${r[2]}" aria-label="What does ${esc(r[0])} mean?">i</button>`:""}</td><td>${r[1]}</td></tr>`).join("")}</table>
   <p class="hint">${esc(op.grid)}</p>
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
-  <div class="legend"><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:#6E95BD">Roof chiller deck (dashed)</span><span style="--c:${COLORS.yard}">Ground heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span>${o.fenceOn?'<span style="--c:#2F3A40">Security fence (dotted) and clear zone</span><span style="--c:#C9A27E">Guardhouse</span>':""}</div>
+  <div class="legend"><span style="--c:${COLORS.clear}">Ground clearance</span><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:#6E95BD">Roof chiller deck (dashed)</span><span style="--c:${COLORS.yard}">Ground heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span>${o.fenceOn?'<span style="--c:#2F3A40">Security fence (dotted) and clear zone</span><span style="--c:#C9A27E">Guardhouse</span>':""}</div>
   <p class="hint">Interior detail appears as you zoom in: rack rows at the profile's ${fmt(B.rowPitch||6,1)} m pitch, and one electrical bay per 2 MW power stream — ${op.infill?"drawn as rooms, since an infill building holds its electrical plant inside":(o.elec==="EMOD"?"drawn as separate enclosures for EMOD":"drawn as one continuous room for EROOM")}. It shows the arrangement the basis of design fixes, not an engineered rack layout.</p>`;}
 function setPaused(v){state.paused=v;const b=$("btnPause");b.setAttribute("aria-pressed",String(v));
   b.textContent=v?"Resume solving":"Pause solving";b.classList.toggle("on",v);
@@ -2352,7 +2355,7 @@ function captureSitePlan(){return new Promise(async res=>{
       g.fillStyle="rgba(255,255,255,.9)";g.fillRect(14*d,c.height-38*d,px+62*d,26*d);g.fillStyle=VT.c;g.fillRect(20*d,c.height-22*d,px,4*d);
       g.font=`${12*d}px ${VT.mono}`;g.fillText(nice+" m",26*d+px,c.height-17*d);
       const present=new Set(geo.map(f=>f.properties.kind));
-      const key=[["hall","Data hall"],["ec","Energy centre"],["admin","Admin and logistics"],["apron","Loading dock"],["yard","Ground heat rejection"],["sub","Substation"],["pond","Retention"],["support","Parking and yards"],["road","Roads"],["roofhr","Roof chiller deck"]].filter(x=>present.has(x[0]));
+      const key=[["clear","Ground clearance"],["hall","Data hall"],["ec","Energy centre"],["admin","Admin and logistics"],["apron","Loading dock"],["yard","Ground heat rejection"],["sub","Substation"],["pond","Retention"],["support","Parking and yards"],["road","Roads"],["roofhr","Roof chiller deck"]].filter(x=>present.has(x[0]));
       g.font=`${11*d}px ${VT.body}`;const kh=17*d,kw=Math.max(...key.map(x=>g.measureText(x[1]).width))+30*d,kx=c.width-kw-14*d,ky=c.height-key.length*kh-20*d;
       g.fillStyle="rgba(255,255,255,.92)";g.fillRect(kx-8*d,ky-8*d,kw+8*d,key.length*kh+14*d);
       key.forEach((x,i)=>{const y=ky+i*kh;if(x[0]==="roofhr"){g.fillStyle=COLORS.roofhr;g.fillRect(kx,y,16*d,11*d);g.setLineDash([3*d,2*d]);g.strokeStyle="#1F5F99";g.strokeRect(kx,y,16*d,11*d);g.setLineDash([]);}
@@ -2362,20 +2365,28 @@ function captureSitePlan(){return new Promise(async res=>{
       map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});renderLayout();res(url);}}});}
 /* tilted 3D massing view of the site for the one-pager */
 function capture3DView(){return new Promise(async res=>{
-  const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},was=!!state.d3;
+  /* works even when the page is in a background tab (the PDF opens a new
+     window): no animation frames are needed, only timers and map.redraw() */
+  const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},was=!!state.d3,baseWas=state.base;
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   state.d3=true;apply3D();
+  map.setLayoutProperty("osm","visibility","none");map.setLayoutProperty("sat","visibility","visible");
   const op=state.result.options[state.opt],brg=-((op.deg||0))-35;
-  map.fitBounds(siteBoundsLL(),{padding:30,duration:0,bearing:brg,pitch:0});
-  map.jumpTo({pitch:58,bearing:brg,zoom:map.getZoom()-0.05});
-  await mapEvent("idle",5000);map.triggerRepaint();await mapEvent("render",800);
+  const cam=map.cameraForBounds(siteBoundsLL(),{padding:40,bearing:brg})||{};
+  const ringC=state.ring.reduce((t,p)=>[t[0]+p[0]/state.ring.length,t[1]+p[1]/state.ring.length],[0,0]);
+  map.jumpTo({center:ringC,bearing:brg,pitch:55,zoom:(cam.zoom||map.getZoom())+0.05});
+  for(let i=0;i<40;i++){map.redraw();if(map.areTilesLoaded&&map.areTilesLoaded()&&i>2)break;await sleep(150);}
+  map.redraw();
   const mc=map.getCanvas(),d=devicePixelRatio,W=mc.width,H=mc.height;
-  /* crop to a wide strip around the middle, where the massing sits */
-  const ch=Math.round(Math.min(H,W*380/900)),cy=Math.round((H-ch)/2+H*.01);
+  /* crop a wide strip centred on the site */
+  const ch=Math.round(Math.min(H,W*380/900)),cy=Math.round((H-ch)/2);
   const c=document.createElement("canvas");c.width=W;c.height=ch;const g=c.getContext("2d");
   g.fillStyle="#fff";g.fillRect(0,0,W,ch);try{g.drawImage(mc,0,Math.max(0,Math.min(H-ch,cy)),W,ch,0,0,W,ch);}catch(e){}
-  g.font=`600 ${12*d}px ${VT.body}`;g.fillStyle="rgba(255,255,255,.9)";const t="3D massing, schematic";g.fillRect(8*d,ch-26*d,g.measureText(t).width+16*d,20*d);
+  g.font=`600 ${12*d}px ${VT.body}`;g.fillStyle="rgba(255,255,255,.9)";const t="3D massing, schematic · Imagery © Esri";g.fillRect(8*d,ch-26*d,g.measureText(t).width+16*d,20*d);
   g.fillStyle=VT.c;g.fillText(t,16*d,ch-12*d);
-  state.d3=was;apply3D();map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});
+  state.d3=was;apply3D();
+  map.setLayoutProperty("osm","visibility",baseWas==="osm"?"visible":"none");map.setLayoutProperty("sat","visibility",baseWas==="sat"?"visible":"none");
+  map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});map.redraw();
   res(c.toDataURL("image/jpeg",.9));});}
 function drawLocationSketch(W0){
   const W=W0||1400,H=380,c=document.createElement("canvas");c.width=W;c.height=H;const g=c.getContext("2d");
