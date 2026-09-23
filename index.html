@@ -594,9 +594,24 @@ function largestRect(P,cell,exclude){
   if(!best) return null;
   return [x0+best[0]*cell,y0+best[1]*cell,x0+(best[2]+1)*cell,y0+(best[3]+1)*cell];
 }
+/* infill respects the Storeys setting as a cap on total floors (plant floors
+   included); if the full load needs more, place the largest load that fits */
 function solveInfill(o,poly,B,siteArea,angles){
+  const full=solveInfillRaw(o,poly,B,siteArea,angles);
+  const cap=Math.max(1,Math.round(o.storeys||0));
+  if(!full||!(cap>0)||full.storeys<=cap) return full;
+  const target=full.mw;let lo=0,hi=target,best=null;
+  for(let i=0;i<14&&hi-lo>0.25;i++){const mid=(lo+hi)/2,r=solveInfillRaw(o,poly,B,siteArea,angles,mid);
+    if(r&&r.storeys<=cap){lo=mid;best=r;}else hi=mid;}
+  const step=v=>Math.floor(v*2)/2;
+  if(best&&step(lo)>0){const r2=solveInfillRaw(o,poly,B,siteArea,angles,step(lo));if(r2&&r2.storeys<=cap)best=r2;}
+  const covNeed=Math.min(100,full.cov*full.storeys/cap);
+  const out=best||full;out.targetMW=target;out.capInfo={cap,need:full.storeys,fullMW:target,covNeed,fits:!!best};
+  if(!best){out.mw=0;}
+  out.score=1e9+out.mw*1e6-1e3;return out;}
+function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
   const dens=(o.mix&&o.mix.length===1)?o.mix[0].dens:o.density;
-  const mw=(o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;
+  const mw=mwOverride!=null?mwOverride:(o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;
   const d=B.density[dens],E=B.elec[o.elec];
   const racks=Math.round(mw*1000/d.kw), hall=racks*d.sqmRack;
   const hallGfa=hall*B.circFactor, crit=E.crit*mw, ec=E.ecPerMW*mw, admin=E.admin;
@@ -1095,7 +1110,10 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(o.pins&&o.pins.length&&(r.pinsPlaced||0)<Math.min(o.pins.length,r.specs.length))
     flags.push((Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0))+" pinned building"+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"s do":" does")+" not fit where pinned, so the solver placed "+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"them":"it")+" freely. Move the pin or reduce the building size.");
   let limit;
-  if(infill) limit="Target of "+r.targetMW+" MW IT fits as an infill building of "+L[0].storeys+" floors on "+fmt(L[0].foot,0)+" sqm.";
+  if(infill&&r.capInfo){const c=r.capInfo;
+    limit="The "+c.cap+"-floor cap limits the infill building to "+fmt(r.mw,1)+" MW of "+fmt(c.fullMW,0)+" MW. The full load needs "+c.need+" floors (plant floors included) at this coverage, or about "+fmt(c.covNeed,0)+"% coverage at "+c.cap+" floors.";
+    flags.push("Storeys cap: "+limit+" Raise Storeys, the coverage limit or chiller tiers, or reduce the load.");}
+  else if(infill) limit="Target of "+r.targetMW+" MW IT fits as an infill building of "+L[0].storeys+" floors on "+fmt(L[0].foot,0)+" sqm.";
   else if(it>=r.targetMW) limit="Target of "+r.targetMW+" MW IT fits.";
   else{const n=(r.missedSpecs&&r.missedSpecs[0])||r.specs[L.length];
     limit=L.length===0?"No campus-style block fits. The smallest needs about "+Math.round(n.Lm+2*o.road)+" \u00D7 "+Math.round(n.H+(n.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)+" m including yard clearances."
