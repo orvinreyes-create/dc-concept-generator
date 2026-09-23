@@ -2367,8 +2367,152 @@ function captureSitePlan(){return new Promise(async res=>{
         g.fillStyle=VT.c;g.fillText(x[1],kx+22*d,y+10*d);});
       const url=c.toDataURL("image/jpeg",0.9);
       map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});renderLayout();res(url);}}});}
+/* ===== Textured 3D render for the one-pager (three.js, loaded on first use) ===== */
+async function loadThree(){if(window.__THREE)return window.__THREE;
+  window.__THREE=await import("https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.min.js");return window.__THREE;}
+function texCanvas(w,h,draw){const c=document.createElement("canvas");c.width=w;c.height=h;draw(c.getContext("2d"),w,h);return c;}
+function noise(g,w,h,a,n){for(let i=0;i<n;i++){g.fillStyle=`rgba(${Math.random()<.5?0:255},${Math.random()<.5?0:255},${Math.random()<.5?0:255},${a*Math.random()})`;g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*2,1+Math.random()*2);}}
+/* top-down satellite capture of the site and surroundings, with the layout hidden */
+async function captureGround(zoomOut){
+  const ids=["site-fill","layout-fill","layout-line","roof-line","detail-fill","detail-line","layout-3d","site-line","fence-line","roadprev-line"];
+  const vis=ids.filter(k=>map.getLayer(k)).map(k=>[k,map.getLayoutProperty(k,"visibility")||"visible"]);
+  vis.forEach(([k])=>map.setLayoutProperty(k,"visibility","none"));labels.forEach(m=>m.getElement().style.visibility="hidden");
+  map.setLayoutProperty("osm","visibility","none");map.setLayoutProperty("sat","visibility","visible");
+  const cen=state.ring.reduce((t,p)=>[t[0]+p[0]/state.ring.length,t[1]+p[1]/state.ring.length],[0,0]);
+  const cam=map.cameraForBounds(siteBoundsLL(),{padding:20,bearing:0})||{};
+  map.jumpTo({center:cen,bearing:0,pitch:0,zoom:(cam.zoom||map.getZoom())-(zoomOut||1.1)});
+  for(let i=0;i<50;i++){map.redraw();if(map.areTilesLoaded&&map.areTilesLoaded()&&i>2)break;await new Promise(r=>setTimeout(r,150));}
+  map.redraw();
+  const mc=map.getCanvas(),img=document.createElement("canvas");img.width=mc.width;img.height=mc.height;
+  let ok=false;try{const g2=img.getContext("2d");g2.drawImage(mc,0,0);
+    /* tiles that never loaded leave the canvas black or empty: use a plain ground instead */
+    const t=document.createElement("canvas");t.width=32;t.height=32;const tg=t.getContext("2d");tg.drawImage(img,0,0,32,32);
+    const px=tg.getImageData(0,0,32,32).data;let sum=0,vary=0;for(let i=0;i<px.length;i+=4){const v=px[i]+px[i+1]+px[i+2];sum+=v;vary+=Math.abs(v-(px[i+4]+px[i+5]+px[i+6]||v));}
+    ok=sum/(px.length/4)>60&&vary>2000;}catch(e){}
+  const W=mc.clientWidth,H=mc.clientHeight,nw=map.unproject([0,0]),se=map.unproject([W,H]);
+  vis.forEach(([k,v])=>map.setLayoutProperty(k,"visibility",v));labels.forEach(m=>m.getElement().style.visibility="");
+  return ok?{img,nw:[nw.lng,nw.lat],se:[se.lng,se.lat]}:null;}
+async function renderTextured3D(){
+  const T=await loadThree();
+  const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},baseWas=state.base;
+  let ground=null;try{ground=await captureGround(1.1);}catch(e){}
+  map.setLayoutProperty("osm","visibility",baseWas==="osm"?"visible":"none");map.setLayoutProperty("sat","visibility",baseWas==="sat"?"visible":"none");
+  map.jumpTo({center:prev.c,zoom:prev.z,bearing:prev.b,pitch:prev.p});map.redraw();
+  const F=state.F,op=state.result.options[state.opt],geo=state.layoutGeo||[];
+  const cm=state.ring.map(F.toM).reduce((t,p,_,a)=>[t[0]+p[0]/a.length,t[1]+p[1]/a.length],[0,0]);
+  const XZ=ll=>{const m=F.toM(ll);return [m[0]-cm[0],-(m[1]-cm[1])];};
+  /* procedural textures, sized in metres */
+  const tex=(c,su,sv)=>{const t=new T.CanvasTexture(c);t.wrapS=t.wrapT=T.RepeatWrapping;t.colorSpace=T.SRGBColorSpace;t.anisotropy=8;t.userData={su,sv};return t;};
+  const clad=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#DADDE0";g.fillRect(0,0,w,h);for(let x=0;x<w;x+=16){g.fillStyle="rgba(0,0,0,.22)";g.fillRect(x,0,3,h);g.fillStyle="rgba(255,255,255,.45)";g.fillRect(x+3,0,2,h);}
+    g.fillStyle="rgba(0,0,0,.12)";g.fillRect(0,h-4,w,4);noise(g,w,h,.05,600);}),4,6.25);
+  const louvre=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#9EA5AB";g.fillRect(0,0,w,h);for(let y=0;y<h;y+=10){g.fillStyle="rgba(0,0,0,.28)";g.fillRect(0,y,w,4);g.fillStyle="rgba(255,255,255,.18)";g.fillRect(0,y+4,w,2);}
+    g.fillStyle="rgba(0,0,0,.35)";for(let x=0;x<w;x+=64)g.fillRect(x,0,3,h);}),6,6.25);
+  const office=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#EEF0F2";g.fillRect(0,0,w,h);g.fillStyle="#2D4A66";g.fillRect(0,h*.35,w,h*.4);
+    g.fillStyle="rgba(255,255,255,.25)";for(let x=0;x<w;x+=32)g.fillRect(x,h*.35,2,h*.4);g.fillStyle="rgba(255,255,255,.18)";g.fillRect(0,h*.38,w,6);}),6,6.25);
+  const dock=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#C9CDD1";g.fillRect(0,0,w,h);g.fillStyle="#7E868D";g.fillRect(w*.2,h*.25,w*.6,h*.75);
+    g.fillStyle="rgba(0,0,0,.25)";for(let y=h*.25;y<h;y+=8)g.fillRect(w*.2,y,w*.6,2);g.fillStyle="#E0B43A";g.fillRect(w*.18,h*.22,w*.02,h*.78);g.fillRect(w*.8,h*.22,w*.02,h*.78);}),6,9);
+  const membrane=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#E4E7EA";g.fillRect(0,0,w,h);g.strokeStyle="rgba(0,0,0,.06)";g.lineWidth=2;for(let x=0;x<w;x+=64){g.beginPath();g.moveTo(x,0);g.lineTo(x,h);g.stroke();}noise(g,w,h,.06,900);}),12,12);
+  const asphalt=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#46494D";g.fillRect(0,0,w,h);noise(g,w,h,.12,5000);}),8,8);
+  const concrete=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#C4C6C4";g.fillRect(0,0,w,h);noise(g,w,h,.08,4000);g.strokeStyle="rgba(0,0,0,.10)";g.strokeRect(0,0,w,h);}),6,6);
+  const gravel=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#A9A59C";g.fillRect(0,0,w,h);noise(g,w,h,.35,9000);}),3,3);
+  const grass=tex(texCanvas(256,256,(g,w,h)=>{g.fillStyle="#7E9F5C";g.fillRect(0,0,w,h);for(let i=0;i<7000;i++){g.fillStyle=`rgba(${60+Math.random()*60|0},${110+Math.random()*60|0},${40+Math.random()*40|0},.5)`;g.fillRect(Math.random()*w,Math.random()*h,1,2);}}),5,5);
+  const chillTop=tex(texCanvas(256,128,(g,w,h)=>{g.fillStyle="#B8BEC4";g.fillRect(0,0,w,h);for(let i=0;i<4;i++){const cx=w*(i+.5)/4;g.fillStyle="#3C4248";g.beginPath();g.arc(cx,h*.5,h*.36,0,7);g.fill();
+    g.strokeStyle="#8A9096";g.lineWidth=2;for(let a=0;a<6;a++){g.beginPath();g.moveTo(cx,h*.5);g.lineTo(cx+Math.cos(a)*h*.34,h*.5+Math.sin(a)*h*.34);g.stroke();}}}),12,2.4);
+  const M=(t,col,rough)=>new T.MeshStandardMaterial({map:t||null,color:col||0xffffff,roughness:rough??.85,metalness:0});
+  const mats={wall:{clad:M(clad),louvre:M(louvre),office:M(office),dock:M(dock),plain:M(null,0xB9BEC3)},roof:{membrane:M(membrane),dark:M(null,0x9097A0),concrete:M(concrete)},
+    asphalt:M(asphalt,0xffffff,.95),concrete:M(concrete),gravel:M(gravel),grass:M(grass),steel:M(null,0x8E959C,.6),chiller:M(null,0xC7CCD1,.55),chillTop:M(chillTop,0xffffff,.6),
+    transformer:M(null,0x6F7A84,.5),fence:M(null,0x3B4046,.5),guard:M(null,0xE6E1D6)};
+  mats.steel.metalness=.3;mats.transformer.metalness=.3;
+  const buckets=new Map(),push=(mat,p,n,uv)=>{if(!buckets.has(mat))buckets.set(mat,{p:[],n:[],uv:[]});const b=buckets.get(mat);b.p.push(...p);b.n.push(...n);b.uv.push(...uv);};
+  const clean=r=>{const q=r.slice();if(q.length>1&&q[0][0]===q[q.length-1][0]&&q[0][1]===q[q.length-1][1])q.pop();return q;};
+  const cap=(mat,ring,y,sx,sy)=>{const tr=earcut2(ring);for(const t of tr){let [a,b,c]=t.map(i=>ring[i]);
+      /* +Y facing: counter-clockwise seen from above in x,z (z south) */
+      const cr=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);if(cr>0){const t2=b;b=c;c=t2;}
+      push(mat,[a[0],y,a[1],b[0],y,b[1],c[0],y,c[1]],[0,1,0,0,1,0,0,1,0],[a[0]/sx,-a[1]/sy,b[0]/sx,-b[1]/sy,c[0]/sx,-c[1]/sy]);}};
+  const walls=(mat,ring,y0,y1)=>{const su=mat.map?mat.map.userData.su:4,sv=mat.map?mat.map.userData.sv:4;
+    let A=0;for(let i=0;i<ring.length;i++){const a=ring[i],b=ring[(i+1)%ring.length];A+=a[0]*b[1]-b[0]*a[1];}
+    let run=0;for(let i=0;i<ring.length;i++){let a=ring[i],b=ring[(i+1)%ring.length];const L=Math.hypot(b[0]-a[0],b[1]-a[1]);if(L<1e-6)continue;
+      let nx=(b[1]-a[1])/L,nz=-(b[0]-a[0])/L;if(A<0){nx=-nx;nz=-nz;}
+      /* order so the face points outward */
+      const P=[a[0],y0,a[1],b[0],y0,b[1],b[0],y1,b[1],a[0],y0,a[1],b[0],y1,b[1],a[0],y1,a[1]];
+      const u0=run/su,u1=(run+L)/su,v0=y0/sv,v1=y1/sv;run+=L;
+      let UV=[u0,v0,u1,v0,u1,v1,u0,v0,u1,v1,u0,v1];
+      const e=[b[0]-a[0],0,b[1]-a[1]],up=[0,1,0],cx=[e[1]*up[2]-e[2]*up[1],e[2]*up[0]-e[0]*up[2],e[0]*up[1]-e[1]*up[0]];
+      let Pp=P;if(cx[0]*nx+cx[2]*nz<0){Pp=[P[0],P[1],P[2],P[6],P[7],P[8],P[3],P[4],P[5],P[9],P[10],P[11],P[15],P[16],P[17],P[12],P[13],P[14]];UV=[UV[0],UV[1],UV[4],UV[5],UV[2],UV[3],UV[6],UV[7],UV[10],UV[11],UV[8],UV[9]];}
+      push(mat,Pp,[nx,0,nz,nx,0,nz,nx,0,nz,nx,0,nz,nx,0,nz,nx,0,nz],UV);}};
+  const boxAt=(mat,topMat,c,ax,az,w,d,y0,y1)=>{/* oriented box: centre c, unit axes ax (width) and az (depth) */
+    const q=[[c[0]-ax[0]*w/2-az[0]*d/2,c[1]-ax[1]*w/2-az[1]*d/2],[c[0]+ax[0]*w/2-az[0]*d/2,c[1]+ax[1]*w/2-az[1]*d/2],[c[0]+ax[0]*w/2+az[0]*d/2,c[1]+ax[1]*w/2+az[1]*d/2],[c[0]-ax[0]*w/2+az[0]*d/2,c[1]-ax[1]*w/2+az[1]*d/2]];
+    walls(mat,q,y0,y1);cap(topMat||mat,q,y1,w,d);};
+  const LIFT={road:.14,clear:.05,support:.08,pond:.06,apron:.1};
+  let site=clean(state.ring.map(XZ));cap(mats.grass,site,.02,5,5);
+  const allP=[];
+  for(const f of geo){const k=f.properties.kind;
+    if(f.geometry.type==="LineString"&&k==="fence"){const L=f.geometry.coordinates.map(XZ);
+      for(let i=0;i+1<L.length;i++){const a=L[i],b=L[i+1],len=Math.hypot(b[0]-a[0],b[1]-a[1]);if(len<.5)continue;const ax=[(b[0]-a[0])/len,(b[1]-a[1])/len];
+        boxAt(mats.fence,null,[(a[0]+b[0])/2,(a[1]+b[1])/2],ax,[-ax[1],ax[0]],len,.12,0,2.4);}continue;}
+    if(f.geometry.type!=="Polygon"||k==="clearzone")continue;
+    const ring=clean(f.geometry.coordinates[0].map(XZ));if(ring.length<3)continue;ring.forEach(p=>allP.push(p));
+    const h=+f.properties.h||0,b=+f.properties.base||0;
+    if(k==="roofhr"){/* steel deck with rows of air-cooled chillers */
+      const p0=ring[0],p1=ring[1],p3=ring[ring.length-1],L1=Math.hypot(p1[0]-p0[0],p1[1]-p0[1]),L2=Math.hypot(p3[0]-p0[0],p3[1]-p0[1]);
+      const e1=[(p1[0]-p0[0])/L1,(p1[1]-p0[1])/L1],e2=[(p3[0]-p0[0])/L2,(p3[1]-p0[1])/L2];
+      const long=L1>=L2?{e:e1,L:L1,o:e2,W:L2}:{e:e2,L:L2,o:e1,W:L1};
+      const deckY=b+1.2;cap(mats.steel,ring,deckY,4,4);walls(mats.steel,ring,b,deckY);
+      const uw=2.3,ul=12,gap=1.6,nRow=Math.max(1,Math.floor((long.W-2)/(uw+gap))),nCol=Math.max(1,Math.floor((long.L-2)/(ul+1.5)));
+      let placed=0;
+      for(let r=0;r<nRow&&placed<500;r++)for(let cI=0;cI<nCol&&placed<500;cI++){
+        const s=-long.L/2+1+(cI+.5)*(long.L-2)/nCol,t=-long.W/2+1+(r+.5)*(long.W-2)/nRow;
+        const cc=[(p0[0]+p1[0]+p3[0]+ring[2][0])/4+long.e[0]*s+long.o[0]*t,(p0[1]+p1[1]+p3[1]+ring[2][1])/4+long.e[1]*s+long.o[1]*t];
+        boxAt(mats.chiller,mats.chillTop,cc,long.e,long.o,ul,uw,deckY,deckY+2.4);placed++;}
+      continue;}
+    if(h>0){
+      const wallM={hall:mats.wall.clad,ec:mats.wall.louvre,admin:mats.wall.office,apron:mats.wall.dock,yard:mats.wall.louvre,guard:mats.guard,sub:null}[k]||mats.wall.plain;
+      if(k==="sub"){cap(mats.gravel,ring,.12,3,3);
+        const cx=ring.reduce((t,p)=>[t[0]+p[0]/ring.length,t[1]+p[1]/ring.length],[0,0]);const L1=Math.hypot(ring[1][0]-ring[0][0],ring[1][1]-ring[0][1]),L2=Math.hypot(ring[2][0]-ring[1][0],ring[2][1]-ring[1][1]);
+        const e1=[(ring[1][0]-ring[0][0])/L1,(ring[1][1]-ring[0][1])/L1],e2=[(ring[2][0]-ring[1][0])/L2,(ring[2][1]-ring[1][1])/L2];
+        const nx=Math.max(1,Math.min(4,Math.floor(L1/14))),nz=Math.max(1,Math.min(3,Math.floor(L2/16)));
+        for(let i=0;i<nx;i++)for(let j=0;j<nz;j++){const s=-L1/2+(i+.5)*L1/nx,t=-L2/2+(j+.5)*L2/nz;
+          boxAt(mats.transformer,null,[cx[0]+e1[0]*s+e2[0]*t,cx[1]+e1[1]*s+e2[1]*t],e1,e2,Math.min(8,L1/nx*.55),Math.min(5,L2/nz*.45),.12,4.2);}
+        walls(mats.fence,ring,0,2.4);continue;}
+      walls(wallM,ring,b,h);cap(k==="hall"?mats.roof.membrane:k==="apron"?mats.roof.concrete:mats.roof.dark,ring,h,12,12);
+      if(k==="apron")cap(mats.concrete,ring,.1,6,6);
+      continue;}
+    const flat={road:mats.asphalt,clear:mats.concrete,support:mats.asphalt,pond:null,apron:mats.concrete,landscape:null,spare:null}[k];
+    if(flat)cap(flat,ring,LIFT[k]||.05,flat.map?flat.map.userData.su:6,flat.map?flat.map.userData.sv:6);
+    if(k==="pond"){cap(new T.MeshStandardMaterial({color:0x3E6A80,roughness:.15,metalness:.1}),ring,.07,6,6);}}
+  /* scene */
+  const Wd=1800,Hd=760,cv=document.createElement("canvas");cv.width=Wd;cv.height=Hd;
+  const R=new T.WebGLRenderer({canvas:cv,antialias:true,preserveDrawingBuffer:true});R.setSize(Wd,Hd,false);
+  R.shadowMap.enabled=true;R.shadowMap.type=T.PCFSoftShadowMap;R.toneMapping=T.ACESFilmicToneMapping;R.toneMappingExposure=1.05;R.outputColorSpace=T.SRGBColorSpace;
+  const S=new T.Scene();S.background=new T.Color("#CFDDEA");S.fog=new T.Fog("#CFDDEA",900,2600);
+  for(const [mat,b] of buckets){const g=new T.BufferGeometry();g.setAttribute("position",new T.Float32BufferAttribute(b.p,3));g.setAttribute("normal",new T.Float32BufferAttribute(b.n,3));g.setAttribute("uv",new T.Float32BufferAttribute(b.uv,2));
+    const m=new T.Mesh(g,mat);m.castShadow=true;m.receiveShadow=true;S.add(m);}
+  const xs=allP.concat(site).map(p=>p[0]),zs=allP.concat(site).map(p=>p[1]);
+  const cx=(Math.min(...xs)+Math.max(...xs))/2,cz=(Math.min(...zs)+Math.max(...zs))/2,rad=Math.hypot(Math.max(...xs)-Math.min(...xs),Math.max(...zs)-Math.min(...zs))/2;
+  if(ground&&ground.img){const a=XZ(ground.nw),b=XZ(ground.se),gt=new T.CanvasTexture(ground.img);gt.colorSpace=T.SRGBColorSpace;gt.anisotropy=8;
+    const pl=new T.Mesh(new T.PlaneGeometry(b[0]-a[0],b[1]-a[1]),new T.MeshStandardMaterial({map:gt,roughness:1}));
+    pl.rotation.x=-Math.PI/2;pl.position.set((a[0]+b[0])/2,-.02,(a[1]+b[1])/2);pl.receiveShadow=true;S.add(pl);}
+  else{const pl=new T.Mesh(new T.PlaneGeometry(rad*8,rad*8),new T.MeshStandardMaterial({color:0x9DAE86,roughness:1}));pl.rotation.x=-Math.PI/2;pl.position.set(cx,-.02,cz);pl.receiveShadow=true;S.add(pl);}
+  S.add(new T.HemisphereLight(0xE8F1FF,0x6B6F5E,.9));
+  const sun=new T.DirectionalLight(0xFFF3E0,2.4),phi=((op.deg||0)+35)*Math.PI/180;
+  sun.position.set(cx-Math.sin(phi-1.1)*rad*1.6,rad*1.9,cz+Math.cos(phi-1.1)*rad*1.6);sun.target.position.set(cx,0,cz);
+  sun.castShadow=true;sun.shadow.mapSize.set(4096,4096);const sc=sun.shadow.camera;sc.left=sc.bottom=-rad*1.3;sc.right=sc.top=rad*1.3;sc.near=1;sc.far=rad*8;sun.shadow.bias=-0.0004;sun.shadow.normalBias=.6;
+  S.add(sun,sun.target);
+  const C=new T.PerspectiveCamera(30,Wd/Hd,1,rad*20),el=33*Math.PI/180,dist=rad/Math.tan(15*Math.PI/180)*.62;
+  C.position.set(cx+Math.sin(phi)*Math.cos(el)*dist,Math.sin(el)*dist,cz+Math.cos(phi)*Math.cos(el)*dist);C.lookAt(cx,rad*.02,cz);
+  R.render(S,C);
+  const out=cv.toDataURL("image/jpeg",.92);
+  R.dispose();buckets.forEach((b,m)=>{if(m.map)m.map.dispose();m.dispose();});
+  return out;}
+
 /* tilted 3D massing view of the site for the one-pager */
-function capture3DView(){return new Promise(async res=>{
+async function capture3DView(){
+  try{const u=await renderTextured3D();if(u)return await stamp3D(u);}catch(e){console.warn("3D render fell back to the map view",e);}
+  return captureMap3D();}
+function stamp3D(u){return new Promise(ok=>{const im=new Image();im.onload=()=>{const c=document.createElement("canvas");c.width=im.width;c.height=im.height;const g=c.getContext("2d");g.drawImage(im,0,0);
+  const d=2,t="3D massing render, schematic \u00B7 Imagery \u00A9 Esri";g.font=`600 ${12*d}px ${VT.body}`;g.fillStyle="rgba(255,255,255,.9)";g.fillRect(8*d,c.height-26*d,g.measureText(t).width+16*d,20*d);
+  g.fillStyle=VT.c;g.fillText(t,16*d,c.height-12*d);ok(c.toDataURL("image/jpeg",.9));};im.src=u;});}
+function captureMap3D(){return new Promise(async res=>{
   /* works even when the page is in a background tab (the PDF opens a new
      window): no animation frames are needed, only timers and map.redraw() */
   const prev={c:map.getCenter(),z:map.getZoom(),b:map.getBearing(),p:map.getPitch()},was=!!state.d3,baseWas=state.base;
