@@ -67,6 +67,10 @@ th{padding:4px 0;border-bottom:1px solid var(--line);text-align:left;font-size:1
 th:last-child{text-align:right}
 .opmenu{position:relative;display:inline-block}
 #btnPause.on{background:#B7791F;color:#fff;border-color:#B7791F}
+.ptz{position:absolute;right:10px;top:120px;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px;display:flex;flex-direction:column;gap:5px;box-shadow:0 4px 14px rgba(0,0,0,.18);width:132px}
+.ptz[hidden]{display:none}.ptz-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}.ptz-row{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.ptz button{font:600 13px Barlow,sans-serif;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:6px 0;cursor:pointer;user-select:none;touch-action:none}
+.ptz .ptz-row button{font-size:11px}.ptz button:hover{border-color:var(--accent)}.ptz button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
 #btn3D.on{background:#0F6E8C;color:#fff;border-color:#0F6E8C}
 body.paused .live{outline:2px dashed #B7791F;outline-offset:2px}
 .ff{position:absolute;top:108px;right:10px;z-index:6;width:min(440px,calc(100% - 20px));max-height:calc(100% - 150px);overflow:auto;box-shadow:0 6px 18px rgba(0,0,0,.18);border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--ink);padding:10px;display:flex;flex-direction:column;gap:8px}
@@ -270,6 +274,19 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 
 <div class="mapwrap">
   <div id="map"></div>
+  <div class="ptz" id="ptz" hidden aria-label="3D camera controls">
+    <div class="ptz-grid">
+      <button type="button" data-p="orbitL" title="Orbit left (hold)" aria-label="Orbit left">&#8634;</button>
+      <button type="button" data-p="tiltUp" title="Tilt toward plan view (hold)" aria-label="Tilt up">&#9650;</button>
+      <button type="button" data-p="orbitR" title="Orbit right (hold)" aria-label="Orbit right">&#8635;</button>
+      <button type="button" data-p="zoomOut" title="Zoom out (hold)" aria-label="Zoom out">&minus;</button>
+      <button type="button" data-p="tiltDown" title="Tilt toward street level (hold)" aria-label="Tilt down">&#9660;</button>
+      <button type="button" data-p="zoomIn" title="Zoom in (hold)" aria-label="Zoom in">+</button>
+    </div>
+    <button type="button" class="wide" data-p="fit">Fit site</button>
+    <div class="ptz-row"><button type="button" data-p="gate" title="From the gate, turned 35 degrees">Gate</button><button type="button" data-p="north" title="From the south, turned 35 degrees, matching the plan">North</button><button type="button" data-p="iso" title="45 degrees to the building grid">Iso</button></div>
+    <button type="button" class="wide" data-p="spin" aria-pressed="false">Auto-orbit</button>
+  </div>
   <div class="toolbar">
     <form class="search" id="searchForm" autocomplete="off"><input id="searchQ" placeholder="Search a place in the Philippines" aria-label="Search place" role="combobox" aria-expanded="false" aria-controls="searchResults" autocomplete="off"><button class="btn" type="submit">Search</button><ul id="searchResults" hidden></ul></form>
     <button class="btn" id="btnDraw" type="button" aria-pressed="false">Draw site</button>
@@ -1636,7 +1653,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
     mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear"),subAspect:g("subAspect")||4,subMinSide:g("subMinSide")||30};}
 
 /* ===== Map ===== */
-const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,preserveDrawingBuffer:true,attributionControl:{compact:true},
+const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,maxPitch:78,preserveDrawingBuffer:true,attributionControl:{compact:true},
   style:{version:8,sources:{
     osm:{type:"raster",tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],tileSize:256,maxzoom:19,attribution:"© OpenStreetMap contributors"},
     sat:{type:"raster",tiles:["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],tileSize:256,maxzoom:19,attribution:"Imagery © Esri, Maxar, Earthstar Geographics"}},
@@ -2077,10 +2094,44 @@ function setPaused(v){state.paused=v;const b=$("btnPause");b.setAttribute("aria-
   document.body.classList.toggle("paused",v);}
 $("btnPause").onclick=()=>setPaused(!state.paused);
 function set3D(v){state.d3=v;const b=$("btn3D");b.setAttribute("aria-pressed",String(v));b.classList.toggle("on",v);
-  apply3D();
+  apply3D();if(typeof PTZ!=="undefined")PTZ.show(v);
   map.easeTo({pitch:v?60:0,bearing:v?state.lastDeg?-state.lastDeg:-20:0,duration:600});
-  status(v?"3D massing: storey heights only, no facades or equipment. Drag with the right mouse button to rotate.":"");}
+  status(v?"3D massing: storey heights only. Use the camera pad to orbit, tilt and zoom; right-drag also rotates.":"");}
 $("btn3D").onclick=()=>set3D(!state.d3);
+/* ----- 3D camera pad: orbit around the site, tilt, zoom, presets ----- */
+const PTZ=(()=>{
+  const siteC=()=>state.ring.reduce((t,p)=>[t[0]+p[0]/state.ring.length,t[1]+p[1]/state.ring.length],[0,0]);
+  const brgTo=(from,to)=>{const k=Math.cos(from[1]*Math.PI/180);return Math.atan2((to[0]-from[0])*k,to[1]-from[1])*180/Math.PI;};
+  const fitZoom=b=>{const c=map.cameraForBounds(siteBoundsLL(),{padding:60,bearing:b});return c?c.zoom:map.getZoom();};
+  const presetBearing=k=>{const op=state.result&&state.result.options[state.opt],grid=op?(op.deg||0):0;
+    if(k==="north")return 35;
+    if(k==="iso")return -grid+45;
+    if(op&&op.gate&&state.F){const g=state.F.toLL(rot(op.gate.edge,op.a));return brgTo(g,siteC())+35;}
+    return -grid+45;};
+  let spin=null,hold=null;
+  const stopSpin=()=>{if(spin){cancelAnimationFrame(spin);spin=null;}const b=document.querySelector('.ptz [data-p="spin"]');if(b)b.setAttribute("aria-pressed","false");};
+  const act=k=>{if(!state.ring.length)return;
+    switch(k){
+      case "orbitL":case "orbitR":map.jumpTo({center:siteC(),bearing:map.getBearing()+(k==="orbitR"?-4:4)});break;
+      case "tiltUp":map.jumpTo({pitch:Math.max(0,map.getPitch()-3)});break;
+      case "tiltDown":map.jumpTo({pitch:Math.min(78,map.getPitch()+3)});break;
+      case "zoomIn":map.jumpTo({zoom:map.getZoom()+.08});break;
+      case "zoomOut":map.jumpTo({zoom:map.getZoom()-.08});break;
+      case "fit":map.easeTo({center:siteC(),zoom:fitZoom(map.getBearing())-.15*(map.getPitch()/60),duration:500});break;
+      case "gate":case "north":case "iso":{stopSpin();const b=presetBearing(k);map.easeTo({center:siteC(),bearing:b,pitch:58,zoom:fitZoom(b)-.1,duration:700});break;}
+      case "spin":if(spin){stopSpin();break;}
+        document.querySelector('.ptz [data-p="spin"]').setAttribute("aria-pressed","true");
+        {const c=siteC();let last=performance.now();const tick=t=>{const dt=Math.min(50,t-last);last=t;map.jumpTo({center:c,bearing:map.getBearing()+dt*.006});spin=requestAnimationFrame(tick);};spin=requestAnimationFrame(tick);}
+        break;}};
+  const pad=$("ptz");
+  pad.addEventListener("pointerdown",e=>{const b=e.target.closest("[data-p]");if(!b)return;e.preventDefault();const k=b.dataset.p;
+    if(/orbit|tilt|zoom/.test(k)){stopSpin();act(k);clearInterval(hold);hold=setInterval(()=>act(k),40);}else act(k);});
+  const end=()=>{clearInterval(hold);hold=null;};
+  ["pointerup","pointerleave","pointercancel"].forEach(ev=>pad.addEventListener(ev,end));
+  /* the pad's buttons are also reachable by keyboard */
+  pad.addEventListener("keydown",e=>{const b=e.target.closest("[data-p]");if(b&&(e.key==="Enter"||e.key===" ")){e.preventDefault();act(b.dataset.p);}});
+  map.on("mousedown",stopSpin);map.on("touchstart",stopSpin);map.on("wheel",stopSpin);
+  return {show:v=>{pad.hidden=!v;if(!v)stopSpin();},stop:stopSpin};})();
 document.addEventListener("keydown",e=>{if((e.key==="p"||e.key==="P")&&!e.ctrlKey&&!e.metaKey&&!/INPUT|SELECT|TEXTAREA/.test((e.target.tagName||""))){e.preventDefault();setPaused(!state.paused);}});
 $("btnOpt").onclick=()=>{if(state.paused)setPaused(false);state.pendingView=null;
   if(state.ring.length<3){status("Draw a site first.");return;}
