@@ -1,0 +1,24 @@
+name: Refresh site-risk data
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 1 1,4,7,10 *"   # quarterly, 1st of Jan/Apr/Jul/Oct, 10:00 Manila
+  push:
+    paths: ["tools/build_risk_data.py", ".github/workflows/risk-data.yml"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: mkdir -p data && python tools/build_risk_data.py
+      - run: |
+          git config user.name "risk-data-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/grid-ph.json data/faults-ph.json
+          git diff --cached --quiet || git commit -m "Refresh site-risk data ($(date -u +%F))"
+          git push
