@@ -44,6 +44,8 @@ body.locked .app{filter:blur(3px) grayscale(.4);pointer-events:none;user-select:
 #ztip{position:absolute;z-index:6;pointer-events:none;max-width:280px;background:#fff;border:1px solid var(--line);border-left:3px solid #00006E;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,40,.16);padding:7px 9px;font-size:12.5px;line-height:1.35}
 #ztip b{display:block;color:#00006E;font-size:13px}#ztip span{display:block}#ztip small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
 @keyframes zf{0%{box-shadow:0 0 0 3px rgba(0,0,110,.45)}100%{box-shadow:0 0 0 3px rgba(0,0,110,0)}}.zflash{animation:zf 1.6s ease-out;border-radius:4px}
+.spin{display:inline-block;width:11px;height:11px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;margin-right:6px;vertical-align:-1px;animation:spn .7s linear infinite}
+@keyframes spn{to{transform:rotate(360deg)}}.btn.busy{opacity:.8;cursor:progress}.btn.done{background:#E7F4EC;border-color:#2F8F5B;color:#1E6B42}
 .pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
@@ -806,7 +808,7 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     /* dock, admin, halls, mechanical, electrical as bands back from the street */
     let acc=0;
     for(const [kind,ar,name] of [["apron",bands.dock,DN],["admin",bands.admin,AN],
-        ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"],["spare",bands.spare||0,"Spare floor space"]]){
+        ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"],["sparefl",bands.spare||0,"Spare floor space"]]){
       if(ar<1)continue;const t=ar/spanLen, k=K(acc,acc+t);
       if(kind==="hall") hallDepth=t;
       put(0,spanLen,k[0],k[1],kind,name,ar); acc+=t;}
@@ -814,21 +816,25 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     /* GRD pattern: dock and admin form an end block at the street, halls,
        mechanical and electrical run lengthwise off it */
     const endCol=(bands.dock+bands.admin)/stackLen;
-    const dockDepth=stackLen*bands.dock/(bands.dock+bands.admin);
+    const dockDepth=bands.dock+bands.admin>0?stackLen*bands.dock/(bands.dock+bands.admin):0;
     const e=S(0,endCol);
     const kd=K(0,dockDepth), ka=K(dockDepth,stackLen);
-    put(e[0],e[1],kd[0],kd[1],"apron",DN,bands.dock);
+    if(bands.dock>=1)put(e[0],e[1],kd[0],kd[1],"apron",DN,bands.dock);
     if(bands.admin>=1)put(e[0],e[1],ka[0],ka[1],"admin",AN,bands.admin);
     const rest=S(endCol,spanLen);
     let acc=0;
-    for(const [kind,ar,name] of [["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"],["spare",bands.spare||0,"Spare floor space"]]){
+    for(const [kind,ar,name] of [["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"],["sparefl",bands.spare||0,"Spare floor space"]]){
       if(ar<1)continue;const t=ar/(spanLen-endCol), k=K(acc,acc+t);
       if(kind==="hall") hallDepth=t;
       put(rest[0],rest[1],k[0],k[1],kind,name,ar); acc+=t;}
   }};
-  const hd0=()=>hallDepth;layBands(bands,"Dock and freight core","Admin and lobby");const gHallDepth=hallDepth;
+  const hd0=()=>hallDepth;layBands(bands,"Loading dock","Admin and lobby");const gHallDepth=hallDepth;
   let zonesUp=null;
-  if(up){zonesUp=[];ZO=zonesUp;hallDepth=0;layBands({dock:up.core,admin:up.admin,hall:up.hall,crit:up.crit,ec:up.ec,spare:Math.max(0,F-up.core-up.admin-up.hall-up.crit-up.ec)},"Freight lift core","Admin (upper floors)");ZO=zones;}
+  let coreRect=null;
+  if(up){zonesUp=[];ZO=zonesUp;hallDepth=0;layBands({dock:0,admin:up.admin,hall:up.hall,crit:up.crit,ec:up.ec,spare:Math.max(0,F-up.admin-up.hall-up.crit-up.ec-up.core)},"","Admin (upper floors)");ZO=zones;
+    /* freight lift and stair core: a compact shaft on the street face, above the loading dock, running full height */
+    const sd=Math.max(6,Math.min(14,Math.sqrt(up.core))),cx=(r[0]+r[2])/2,cy=(r[1]+r[3])/2;
+    coreRect=front==="bottom"?[cx-sd/2,r[1],cx+sd/2,r[1]+sd]:front==="top"?[cx-sd/2,r[3]-sd,cx+sd/2,r[3]]:front==="left"?[r[0],cy-sd/2,r[0]+sd,cy+sd/2]:[r[2]-sd,cy-sd/2,r[2],cy+sd/2];}
   /* dock apron and access spur, in the strip between building and street */
   const ax=m[4]-m[2],ay=m[5]-m[3],al=Math.hypot(ax,ay)||1,ux=ax/al,uy=ay/al;
   const c=centroidOf(bestFit.P);
@@ -849,7 +855,7 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     typicalHall:up?up.hall:bands.hall,upper:up,adminGround:adminG,
     apronDepth:depth,apronShort:depth<o.dockApron*0.6,W:W,D:F/W,bands:bands};
   const roads=[{a:[m[0],m[1]],b:dockC,w:Math.max(6,o.road*0.75),kind:"access"}];
-  return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,zonesUp:zonesUp,dock:dockQuad,roads:roads,placed:[],
+  return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,zonesUp:zonesUp,coreRect:coreRect,dock:dockQuad,roads:roads,placed:[],
     mw:mw,built:[spec],specs:[spec],subOK:true,pondOK:true,supOK:true,cov:F/siteArea*100,storeys:storeys+plantFloors,
     gate:{edge:[m[0],m[1]],node:dockC,w:6},roadArea:roads.reduce((t,x)=>t+segLen(x)*x.w,0),targetMW:mw,
     score:1e9+mw*1e6-1e3};}
@@ -1289,7 +1295,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access",custom:"Your own roads"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
     missed:(r.missedSpecs||[]).map(x=>({i:r.specs.indexOf(x),m:x.m,dens:x.dens,form:x.form,w:Math.round((x.Lm||0)+2*o.road),h:Math.round((x.H||0)+((x.Yd||0)>0?YARD_CLEAR:o.road)+YARD_CLEAR)})),
-    rect:r.rect,zones:r.zones,zonesUp:r.zonesUp||null,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,subPinned:!!r.subPinned,
+    rect:r.rect,zones:r.zones,zonesUp:r.zonesUp||null,coreRect:r.coreRect||null,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,subPinned:!!r.subPinned,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
     rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Circulation",cname+", "+r.deg+"°","circRow"],
       ["Data buildings",L.length+" of "+r.specs.length,"buildings"],
@@ -1830,7 +1836,7 @@ const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,
     layers:[{id:"osm",type:"raster",source:"osm"},{id:"sat",type:"raster",source:"sat",layout:{visibility:"none"}}]}});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"bottom-right");
 map.addControl(new maplibregl.ScaleControl({unit:"metric"}),"bottom-right");
-const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)",setback:"rgba(0,0,110,0.06)",fenceband:"rgba(47,58,64,0.05)",upper:"rgba(0,0,0,0)"};
+const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)",setback:"rgba(0,0,110,0.06)",fenceband:"rgba(47,58,64,0.05)",upper:"rgba(0,0,0,0)",core:"#5E6B78",sparefl:"#DCE2E8"};
 const EMPTY={type:"FeatureCollection",features:[]};
 /* ===== Zone hover: margins and clear zones explain themselves and link to the setting that makes them ===== */
 const ZINFO={
@@ -1846,15 +1852,23 @@ const ZINFO={
   pond:{t:"Retention pond",v:()=>vv("pondPct")+"% of the site, for stormwater",sec:4,f:"pondPct",how:"Design values \u2192 Site services \u2192 Retention"},
   support:{t:"Parking and yards",v:()=>vv("supportSqm")+" sqm for parking, laydown and storage",sec:4,f:"supportSqm",how:"Design values \u2192 Site services \u2192 Parking and yards"},
   yard:{t:"Ground heat rejection",v:()=>"Chillers or dry coolers placed at grade",sec:3,f:"hrLoc",how:"Layout \u2192 Heat rejection"},
+  core:{t:"Freight lift core",v:()=>"Goods lift and stair, from the loading dock to every floor",sec:3,f:"massing",how:"Sized automatically with the floor plate"},
+  sparefl:{t:"Spare floor space",v:()=>"Room left on the upper floors after the program is placed",sec:2,f:"targetMW",how:"Raise the target load, or lower Storeys to tighten the stack"},
   guard:{t:"Guardhouse",v:()=>"Beside the gate drive, just inside the fence",sec:1,f:"fenceOn",how:"Site \u2192 Security"}};
 function vv(id){const e=$(id);return e?e.value:"";}
 const ztip=document.createElement("div");ztip.id="ztip";ztip.hidden=true;map.getContainer().appendChild(ztip);
 let zHover=null,zRaf=0,zTop=false;
 const zBusy=()=>state.drawing||state.dragging||state.editRoads||state.pinning||state.subPinning||document.body.classList.contains("locked");
+function zLines(f){let L=f.properties.lines;if(typeof L==="string"){try{L=JSON.parse(L);}catch(e){L=null;}}return Array.isArray(L)&&L.length?L:null;}
 function zPick(pt){if(!map.getLayer("layout-fill"))return null;
-  const fs=map.queryRenderedFeatures(pt,{layers:["layout-fill"]});return fs.find(f=>f.properties.z&&ZINFO[f.properties.z])||null;}
-function zShow(f,pt){const I=ZINFO[f.properties.z];
-  ztip.innerHTML=`<b>${I.t}</b><span>${esc(I.v())}</span><small>${I.how}${I.f?" \u00b7 click to adjust":""}</small>`;
+  const ly=state.d3&&map.getLayer("layout-3d")?["layout-3d","layout-fill"]:["layout-fill"];
+  const fs=map.queryRenderedFeatures(pt,{layers:ly});
+  return fs.find(f=>(f.properties.z&&ZINFO[f.properties.z])||(state.d3&&f.layer.id==="layout-3d"&&(zLines(f)||ZINFO[f.properties.kind])))||null;}
+function zInfo(f){if(f.properties.z&&ZINFO[f.properties.z])return ZINFO[f.properties.z];const L=zLines(f);if(!L)return ZINFO[f.properties.kind]||null;
+  return {t:L[0],v:()=>L.slice(1).join(" \u00b7 "),how:"",f:null};}
+function zShow(f,pt){const I=zInfo(f);if(!I)return;const h=+f.properties.h||0,b=+f.properties.base||0,FL=activeBOD().floorM||6;
+  const lvl=state.d3&&h>0?(b>0.5?"Floors "+(Math.round(b/FL)+1)+" to "+Math.max(Math.round(b/FL)+1,Math.round(h/FL)):(h<=FL*1.05?"Ground floor":"Full height"))+" \u00b7 "+fmt(h,1)+" m":"";
+  ztip.innerHTML=`<b>${esc(I.t)}</b><span>${esc(I.v())}</span>${lvl?`<small>${lvl}</small>`:""}${I.how?`<small>${I.how}${I.f?" \u00b7 click to adjust":""}</small>`:""}`;
   ztip.hidden=false;const W=map.getContainer().clientWidth,tw=ztip.offsetWidth;
   ztip.style.left=Math.min(pt.x+14,W-tw-8)+"px";ztip.style.top=(pt.y+16)+"px";
   if(map.getSource("zhover")){if(!zTop){try{map.moveLayer("zhover-fill");map.moveLayer("zhover-line");zTop=true;}catch(e){}}map.getSource("zhover").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:f.geometry}]});}
@@ -1863,7 +1877,7 @@ function zHide(){if(!zHover)return;zHover=null;ztip.hidden=true;if(map.getSource
 map.on("mousemove",e=>{if(zRaf)return;zRaf=requestAnimationFrame(()=>{zRaf=0;
   if(zBusy()){zHide();return;}const f=zPick(e.point);if(!f){zHide();return;}zHover=f;zShow(f,e.point);});});
 map.on("mouseout",zHide);map.on("movestart",()=>{if(zHover)zHide();});
-map.on("click",e=>{if(zBusy())return;const f=zPick(e.point);if(!f)return;const I=ZINFO[f.properties.z];
+map.on("click",e=>{if(zBusy())return;const f=zPick(e.point);if(!f)return;const I=zInfo(f);if(!I||!I.f)return;
   if(!("ontouchstart" in window)||zHover===f||(zHover&&zHover.properties.z===f.properties.z)){
     if(SECS[I.sec]&&!SECS[I.sec].open)SECS[I.sec].open=true;const el=$(I.f);
     if(el){setTimeout(()=>{el.scrollIntoView({block:"center",behavior:"smooth"});el.focus({preventScroll:true});
@@ -2153,7 +2167,7 @@ function buildDetail(op,o,B){
 /* the 3D view is a visibility switch, reapplied whenever layers are rebuilt */
 function apply3D(){const v=!!state.d3;
   const sk=v&&typeof SKIN!=="undefined"&&SKIN.on;
-  if(map.getLayer("layout-3d"))map.setLayoutProperty("layout-3d","visibility",v&&!sk?"visible":"none");
+  if(map.getLayer("layout-3d")){map.setLayoutProperty("layout-3d","visibility",v?"visible":"none");map.setPaintProperty("layout-3d","fill-extrusion-opacity",sk?0:0.95);}
   if(map.getLayer("skin-3d"))map.setLayoutProperty("skin-3d","visibility",sk?"visible":"none");
   /* flat things (roads, parking, retention) stay in plan; only massed zones move to 3D */
   if(map.getLayer("layout-fill")) map.setFilter("layout-fill",v?["all",["==",["geometry-type"],"Polygon"],["==",["get","h"],0]]:["==",["geometry-type"],"Polygon"]);
@@ -2214,7 +2228,8 @@ function renderLayout(){
     const stk=(b0.storeys||1)>1;
     const zU=stk&&op.zonesUp&&op.zonesUp.length?op.zonesUp:null;
     for(const z of op.zones) box(z.r,z.kind,zU?null:tag(z.name,z.area),z.area,stk?FLR:(z.kind==="apron"?HT.apron:iH));
-    if(zU){for(const z of zU) box(z.r,z.kind,tag(z.name+(z.kind==="hall"||z.kind==="ec"||z.kind==="yard"?" (per floor)":""),z.area),z.area,iH,FLR);}
+    if(zU){for(const z of zU) box(z.r,z.kind,tag(z.name+(z.kind==="hall"||z.kind==="ec"||z.kind==="yard"?" (per floor)":""),z.area),z.area,iH,FLR);
+      if(op.coreRect){const c=op.coreRect,ca=(c[2]-c[0])*(c[3]-c[1]);box(c,"core",tag("Freight lift core",ca),1e9,iH+3.5,0);}}
     else if(stk) box(op.rect,"upper",null,undefined,iH,FLR);
     const rc=op.rect,el=document.createElement("div");el.className="lbl";
     /* roof chiller deck over the building, drawn from the end away from the
@@ -2262,7 +2277,7 @@ function renderLayout(){
   }
   /* clearances sit under everything else, roads included */
   {const lo=k=>k==="setback"||k==="fenceband",sb=feats.filter(f=>lo(f.properties.kind)),cl=feats.filter(f=>f.properties.kind==="clear"),rest=feats.filter(f=>f.properties.kind!=="clear"&&!lo(f.properties.kind));feats.length=0;feats.push(...sb,...cl,...rest);}
-  for(const f of feats){const k=f.properties.kind;if(!f.properties.z&&/^(apron|pond|support|yard|guard)$/.test(k))f.properties.z=k;}
+  for(const f of feats){const k=f.properties.kind;if(!f.properties.z&&(/^(pond|support|guard)$/.test(k)||(/^(apron|yard)$/.test(k)&&!(+f.properties.h>0&&op.infill))))f.properties.z=k;}
   const src=map.getSource("layout");
   if(src) src.setData({type:"FeatureCollection",features:feats});
   const dsrc=map.getSource("detail");
@@ -2808,7 +2823,7 @@ function texturedParts(T){
         boxAt(mats.chiller,mats.chillTop,cc,long.e,long.o,ul,uw,deckY,deckY+2.4);placed++;}
       continue;}
     if(h>0){
-      const wallM={hall:mats.wall.clad,upper:mats.wall.clad,ec:mats.wall.louvre,admin:mats.wall.office,apron:mats.wall.dock,yard:mats.wall.louvre,guard:mats.guard,sub:null}[k]||mats.wall.plain;
+      const wallM={hall:mats.wall.clad,upper:mats.wall.clad,sparefl:mats.wall.clad,core:mats.wall.plain,ec:mats.wall.louvre,admin:mats.wall.office,apron:mats.wall.dock,yard:mats.wall.louvre,guard:mats.guard,sub:null}[k]||mats.wall.plain;
       if(k==="sub"){cap(mats.gravel,ring,.12,3,3);
         const cx=ring.reduce((t,p)=>[t[0]+p[0]/ring.length,t[1]+p[1]/ring.length],[0,0]);const L1=Math.hypot(ring[1][0]-ring[0][0],ring[1][1]-ring[0][1]),L2=Math.hypot(ring[2][0]-ring[1][0],ring[2][1]-ring[1][1]);
         const e1=[(ring[1][0]-ring[0][0])/L1,(ring[1][1]-ring[0][1])/L1],e2=[(ring[2][0]-ring[1][0])/L2,(ring[2][1]-ring[1][1])/L2];
@@ -2816,7 +2831,7 @@ function texturedParts(T){
         for(let i=0;i<nx;i++)for(let j=0;j<nz;j++){const s=-L1/2+(i+.5)*L1/nx,t=-L2/2+(j+.5)*L2/nz;
           boxAt(mats.transformer,null,[cx[0]+e1[0]*s+e2[0]*t,cx[1]+e1[1]*s+e2[1]*t],e1,e2,Math.min(8,L1/nx*.55),Math.min(5,L2/nz*.45),.12,4.2);}
         walls(mats.fence,ring,0,2.4);continue;}
-      walls(wallM,ring,b,h);cap(k==="hall"||k==="upper"?mats.roof.membrane:k==="apron"?mats.roof.concrete:mats.roof.dark,ring,h,12,12);
+      walls(wallM,ring,b,h);cap(k==="hall"||k==="upper"||k==="sparefl"?mats.roof.membrane:k==="apron"||k==="core"?mats.roof.concrete:mats.roof.dark,ring,h,12,12);
       if(k==="apron")cap(mats.concrete,ring,.1,6,6);
       continue;}
     const flat={road:mats.asphalt,clear:mats.concrete,support:mats.asphalt,pond:null,apron:mats.concrete,landscape:null,spare:null}[k];
@@ -3087,12 +3102,12 @@ const pClean=p=>{const q={...p};delete q._file;delete q._dup;return q;};
 async function fsWrite(name,obj){const h=await FS.dir.getFileHandle(name,{create:true});const w=await h.createWritable();await w.write(JSON.stringify(obj,null,1));await w.close();}
 async function fsRead(){const out=[];for await(const [nm,h] of FS.dir.entries()){if(h.kind!=="file"||!/\.dccg\.json$/i.test(nm))continue;
   try{const p=JSON.parse(await (await h.getFile()).text());if(p.app!=="dccg")continue;p._file=nm;p._dup=nm!==pFile(p.name);out.push(p);}catch(e){}}return out;}
-async function loadProjects(){if(FS.ok){try{PROJ=await fsRead();}catch(e){FS.ok=false;status("Lost access to the folder: "+e.message);PROJ=lsGet(LS_PROJ,[]);}}else PROJ=lsGet(LS_PROJ,[]);drawFolder();drawProjects();}
+async function loadProjects(){if(FS.ok){$("folderState").innerHTML='<span class="spin"></span>Reading folder\u2026';try{PROJ=await fsRead();}catch(e){FS.ok=false;status("Lost access to the folder: "+e.message);PROJ=lsGet(LS_PROJ,[]);}}else PROJ=lsGet(LS_PROJ,[]);drawFolder();drawProjects();}
 function drawFolder(){const box=$("folderBox");box.classList.toggle("on",FS.ok);
   if(!fsSupported){$("folderState").textContent="Projects are saved in this browser only. Folder sync needs Chrome or Edge on a computer.";$("btnFolder").hidden=true;return;}
   $("folderState").innerHTML=FS.ok?`Folder <b>${esc(FS.name)}</b> · ${PROJ.length} project${PROJ.length===1?"":"s"}`:FS.dir?`Folder <b>${esc(FS.name)}</b> needs your permission again.`:"Projects are saved in this browser only.";
   $("btnFolder").textContent=FS.ok?"Change folder":FS.dir?"Reconnect":"Connect folder";
-  $("btnRefresh").hidden=!FS.ok;$("btnDisconnect").hidden=!FS.dir;$("saveLocal").textContent=FS.ok?"Save to folder":"Save on this device";}
+  $("btnRefresh").hidden=!FS.ok;$("btnDisconnect").hidden=!FS.dir;if(!$("saveLocal").disabled)$("saveLocal").textContent=FS.ok?"Save to folder":"Save on this device";}
 $("btnFolder").onclick=async()=>{try{
   if(FS.dir&&!FS.ok&&(await FS.dir.requestPermission({mode:"readwrite"}))==="granted"){FS.ok=true;await loadProjects();status(`Reconnected to “${FS.name}”.`);return;}
   const d=await window.showDirectoryPicker({id:"vitro-testfit",mode:"readwrite"});FS.dir=d;FS.ok=true;FS.name=d.name;
@@ -3105,16 +3120,21 @@ $("btnRefresh").onclick=()=>loadProjects().then(()=>FS.ok&&status("Folder refres
 $("btnDisconnect").onclick=async()=>{FS.dir=null;FS.ok=false;FS.name="";try{await idb("readwrite",st=>st.delete("dir"));}catch(e){}loadProjects();status("Disconnected. Projects are saved in this browser again; the folder's files are untouched.");};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&FS.ok)loadProjects();});
 (async()=>{if(fsSupported){try{const d=await idb("readonly",st=>st.get("dir"));if(d){FS.dir=d;FS.name=d.name;FS.ok=(await d.queryPermission({mode:"readwrite"}))==="granted";}}catch(e){}}loadProjects();})();
-$("saveLocal").onclick=async()=>{const s=snapshot(),old=lsGet(LS_PROJ,[]),prev=PROJ.find(p=>p.name===s.name&&!p._dup)||old.find(p=>p.name===s.name);
+async function busyBtn(btn,label,done,fn){const t0=btn.textContent,w=btn.offsetWidth;btn.disabled=true;btn.classList.add("busy");btn.style.minWidth=w+"px";btn.innerHTML='<span class="spin"></span>'+label;
+  const st=performance.now();let ok=true;try{ok=(await fn())!==false;}catch(e){ok=false;status(e.message);}
+  const wait=Math.max(0,450-(performance.now()-st));await new Promise(r=>setTimeout(r,wait));
+  btn.classList.remove("busy");btn.innerHTML=ok?"\u2713 "+done:"Not saved";btn.classList.toggle("done",ok);btn.disabled=false;btn.style.minWidth="";
+  setTimeout(()=>{if(btn.classList.contains("busy"))return;btn.textContent=btn.id==="saveLocal"?(FS.ok?"Save to folder":"Save on this device"):t0;if(!btn.classList.contains("busy"))btn.classList.remove("done");},1400);}
+$("saveLocal").onclick=()=>busyBtn($("saveLocal"),FS.ok?"Saving to folder\u2026":"Saving\u2026","Saved",async()=>{const s=snapshot(),old=lsGet(LS_PROJ,[]),prev=PROJ.find(p=>p.name===s.name&&!p._dup)||old.find(p=>p.name===s.name);
   s.created=(prev&&(prev.created||prev.saved))||s.saved;const okLS=lsSet(LS_PROJ,old.filter(p=>p.name!==s.name).concat([s]));
   if(FS.ok){try{await fsWrite(pFile(s.name),s);status(`Saved to “${FS.name}”.`);}catch(e){status("Could not write to the folder ("+e.message+"). Saved in this browser instead.");}}
   else status(okLS?"Saved on this device.":"This browser blocked storage.");
-  await loadProjects();};
-$("btnBackup").onclick=async()=>{const list=(FS.ok?PROJ.filter(p=>!p._dup):lsGet(LS_PROJ,[])).map(pClean);if(!list.length){status("No saved projects to back up.");return;}
+  await loadProjects();return okLS||FS.ok;});
+$("btnBackup").onclick=()=>busyBtn($("btnBackup"),"Backing up\u2026","Backed up",async()=>{const list=(FS.ok?PROJ.filter(p=>!p._dup):lsGet(LS_PROJ,[])).map(pClean);if(!list.length){status("No saved projects to back up.");return false;}
   const d=new Date(),nm=`TestFit-backup-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.json`;
   const obj={app:"dccg-backup",v:1,created:d.toISOString(),count:list.length,projects:list};
   if(FS.ok){try{await fsWrite(nm,obj);status(`Backed up ${list.length} projects to ${nm} in “${FS.name}”.`);return;}catch(e){}}
-  download(nm,JSON.stringify(obj,null,1),"application/json");status(`Backup of ${list.length} projects downloaded.`);};
+  download(nm,JSON.stringify(obj,null,1),"application/json");status(`Backup of ${list.length} projects downloaded.`);});
 $("exportProj").onclick=()=>download((snapshot().name).replace(/[^\w\-]+/g,"-")+".dccg.json",JSON.stringify(snapshot(),null,1),"application/json");
 $("importProj").onclick=()=>$("projFile").click();
 $("projFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const p=JSON.parse(await f.text());
