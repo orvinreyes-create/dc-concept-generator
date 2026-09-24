@@ -2227,7 +2227,7 @@ function renderLayout(){
     labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(op.gate.edge[0],op.gate.edge[1])).addTo(map));}
 }
 function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
-  $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${fmt(targetOf(o),0)}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${fmt(op.cov,0)}%</b><small>coverage</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
+  $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${fmt(targetOf(o),0)}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${((op.rows||[]).find(r=>r[2]==="racks")||[])[1]||"—"}</b><small>racks</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
   <div class="lim">${coarse?"Updating… ":""}${esc(op.limit)}${op.flags.length?` <span style="color:var(--bad)">${op.flags.length} flag${op.flags.length>1?"s":""}</span>`:""}</div>`;}
 function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activeBOD(),n=state.result.options.length;
   $("results").innerHTML=`<h2>Spec sheet, option ${String.fromCharCode(65+state.opt)} of ${n}</h2>
