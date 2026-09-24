@@ -56,6 +56,7 @@ body.locked .app{filter:blur(3px) grayscale(.4);pointer-events:none;user-select:
 .cmpcol svg{width:100%;height:200px;background:#F5F6F8;border-radius:3px}.cmpcol table{width:100%;font-size:12px;border-collapse:collapse;margin-top:6px}.cmpcol td{padding:3px 0;border-bottom:1px solid var(--line)}.cmpcol td:last-child{text-align:right;font-weight:600}
 .cmpcol .best{color:#1E6B42}.cmpcol .fl{font-size:11px;color:#B45309;margin-top:6px}
 @media print{body>*:not(#cmp){display:none!important}#cmp{position:static;background:none;padding:0}.cmpbox{box-shadow:none;border:0;width:100%}.cmpact,#cmpPick{display:none!important}}
+aside input:disabled{background:#E6E8EC;color:#6B7580;cursor:not-allowed;border-style:dashed}
 .pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
@@ -1850,7 +1851,8 @@ $("mixAdd").onclick=()=>{const B=activeBOD();
   state.mix.push({mw:state.mix.length?state.mix[state.mix.length-1].mw:Math.min(+$("targetMW").value||24,B.profile[state.profile].bldgMax),dens:state.density});
   drawMix();schedule(false);persist();};
 $("mixAuto").onclick=()=>{state.mix=[];drawMix();schedule(false);persist();};
-NUM.forEach(id=>$(id).addEventListener("input",()=>{schedule(false);refreshResets();}));
+NUM.forEach(id=>$(id).addEventListener("input",()=>{schedule(false);refreshResets();;if(typeof syncTarget==="function")syncTarget();}));
+{const _dm=drawMix;drawMix=function(){_dm();if(typeof syncTarget==="function")syncTarget();};}
 function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
   return {profile:state.profile,elec:state.elec,density:state.density,targetMW:g("targetMW"),kw:g("kw"),setback:g("setback"),maxH:g("maxH"),maxCov:g("maxCov"),
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
@@ -3073,7 +3075,7 @@ $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
   const _op=state.result&&state.result.options[state.opt];
-  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),adminSqm:$("adminSqm").value,mw:_op?+(+_op.it).toFixed(1):0,targetMW:+$("targetMW").value||0,profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),adminSqm:$("adminSqm").value,mw:_op?+(+_op.it).toFixed(1):0,targetMW:targetOf(readOpts())||0,profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p,opts){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,opt:!!p.view.opt}:null;state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
@@ -3107,7 +3109,12 @@ $("projName").addEventListener("input",()=>drawProjects());
 /* ===== Sidebar accordion: one section open at a time; closed sections show a one-line summary ===== */
 const optTxt=id=>{const e=$(id);return e&&e.options?e.options[e.selectedIndex].text.replace(/\s*\([^)]*\)/g,""):"";};
 const segTxt=id=>{const b=$(id)&&$(id).querySelector('[aria-pressed="true"]');return b?b.textContent.trim():"";};
-function drawSums(){try{try{$("adminSqm").placeholder="Basis of design: "+fmt(activeBOD().elec[state.elec].admin,0);}catch(e){}const v=id=>$(id)?$(id).value:"";const j=a=>a.filter(Boolean).join(" · ");
+/* A building mix sets the load building by building, so the project total follows it */
+function syncTarget(){const el=$("targetMW");if(!el)return;const m=state.mix||[];
+  if(m.length){const t=m.reduce((a,b)=>a+(+b.mw||0),0);if(String(el.value)!==String(t))el.value=t;el.disabled=true;el.title="Set by the building mix: the sum of each building's MW. Remove the mix to type a project total.";
+    let n=$("tgtNote");if(!n){n=document.createElement("small");n.id="tgtNote";n.className="hint";n.style.display="block";el.insertAdjacentElement("afterend",n);}n.textContent="Sum of the building mix ("+m.length+" building"+(m.length>1?"s":"")+").";}
+  else{el.disabled=false;el.title="";const n=$("tgtNote");if(n)n.remove();}}
+function drawSums(){syncTarget();try{try{$("adminSqm").placeholder="Basis of design: "+fmt(activeBOD().elec[state.elec].admin,0);}catch(e){}const v=id=>$(id)?$(id).value:"";const j=a=>a.filter(Boolean).join(" · ");
   $("sum1").textContent=j([v("projName").trim()||"Untitled site",typeof FS!=="undefined"&&FS.ok?"Folder: "+FS.name:"This browser"]);
   $("sum2").textContent=j([segTxt("segProfile"),v("storeys")&&v("storeys")+" storeys",v("maxCov")&&v("maxCov")+"% cover",v("setback")&&v("setback")+" m setback"]);
   $("sum3").textContent=j([v("targetMW")&&v("targetMW")+" MW target",optTxt("density"),segTxt("segElec"),+$("adminSqm").value>0?"admin "+$("adminSqm").value+" sqm":"",state.mix&&state.mix.length?state.mix.length+" building"+(state.mix.length>1?"s":"")+" set":""]);
@@ -3208,7 +3215,7 @@ $("btnCompare").onclick=()=>{const L=PROJ.filter(p=>!p._dup);$("cmpOut").innerHT
     const btn=$("cmpGo");btn.disabled=true;btn.innerHTML='<span class="spin"></span>Solving '+sel.length+' projects\u2026';await new Promise(r=>setTimeout(r,30));
     const home=snapshot(),res=[];HIST.mute++;
     try{for(const p of sel){restore(p,{keepView:true});runSolve(false);const op=state.result&&state.result.options[state.opt];
-        res.push({p,op,geo:(state.layoutGeo||[]).slice(),ring:state.ring.slice(),devs:devList().length,tgt:+$("targetMW").value});
+        res.push({p,op,geo:(state.layoutGeo||[]).slice(),ring:state.ring.slice(),devs:devList().length,tgt:targetOf(readOpts())});
         await new Promise(r=>setTimeout(r,10));}}
     finally{restore(home,{keepView:true});runSolve(false);setTimeout(()=>{HIST.mute=Math.max(0,HIST.mute-1);},900);}
     const bestMW=Math.max(...res.map(r=>r.op?r.op.it:0));
