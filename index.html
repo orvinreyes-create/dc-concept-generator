@@ -57,6 +57,10 @@ body.locked .app{filter:blur(3px) grayscale(.4);pointer-events:none;user-select:
 .cmpcol .best{color:#1E6B42}.cmpcol .fl{font-size:11px;color:#B45309;margin-top:6px}
 @media print{body>*:not(#cmp){display:none!important}#cmp{position:static;background:none;padding:0}.cmpbox{box-shadow:none;border:0;width:100%}.cmpact,#cmpPick{display:none!important}}
 aside input:disabled{background:#E6E8EC;color:#6B7580;cursor:not-allowed;border-style:dashed}
+.riskcard{border:1px solid var(--line);border-left:3px solid #00006E;border-radius:4px;padding:7px 9px;margin:8px 0;font-size:12.5px}
+.riskcard b.t{color:#00006E}.riskcard table{width:100%;border-collapse:collapse;margin:4px 0}.riskcard td{padding:3px 0;border-bottom:1px solid var(--line);vertical-align:top}.riskcard td:last-child{text-align:right;white-space:nowrap;padding-left:8px}
+.rk{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}.rk.r{background:#B42318}.rk.a{background:#D97706}.rk.g{background:#2F8F5B}.rk.n{background:#8A94A0}
+.riskcard small{color:var(--muted);display:block}
 .pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
@@ -418,7 +422,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <span class="tgroup" aria-label="Edit"><button class="btn" id="btnDraw" type="button" aria-pressed="false">Draw site</button><button class="btn" id="btnFinish" type="button" hidden>Finish</button><button class="btn" id="btnRemove" type="button" disabled>Remove corner</button><button class="btn" id="btnRoads" type="button" aria-pressed="false">Edit roads</button><button class="btn" id="btnRoadsReset" type="button" hidden>Auto roads</button></span>
     <span class="tgroup" aria-label="Pins"><button class="btn" id="btnPin" type="button" aria-pressed="false">Pin building</button><button class="btn" id="btnPinReset" type="button" hidden>Clear pins</button><button class="btn" id="btnSubPin" type="button" aria-pressed="false">Pin substation</button></span>
     <span class="tgroup" aria-label="Solve"><button class="btn" id="btnPause" type="button" aria-pressed="false" title="Stop re-solving while you edit; the site outline and roads still move. Press again (or P) to solve once with every change.">Pause solving</button><button class="btn" id="btnOpt" type="button" title="Search harder: every building order, packing style and road frontage, for up to 8 seconds">Optimise</button><button class="btn" id="btnForce" type="button" aria-expanded="false" title="Relax design values one step at a time until the target fits, then undo what was not needed">Force fit</button><button class="btn" id="btnNext" type="button">Next orientation</button></span>
-    <span class="tgroup" aria-label="View"><button class="btn" id="btnBase" type="button">Satellite</button><button class="btn" id="btn3D" type="button" aria-pressed="false" title="Extrude the layout to storey heights and tilt the view. Massing only: no facades or equipment.">3D</button></span>
+    <span class="tgroup" aria-label="View"><button class="btn" id="btnBase" type="button">Satellite</button><button class="btn" id="btnRisk" type="button" aria-pressed="false" title="Show active faults, substations and transmission lines">Risk layers</button><button class="btn" id="btn3D" type="button" aria-pressed="false" title="Extrude the layout to storey heights and tilt the view. Massing only: no facades or equipment.">3D</button></span>
     <span class="opmenu"><button class="btn" id="btnOne" type="button" aria-haspopup="true" aria-expanded="false">Export &#9662;</button>
       <span class="opmenu-list" id="oneMenu" hidden>
         <span class="mh">One-pager</span><button class="btn" id="btnOnePDF" type="button">PDF (print)</button><button class="btn" id="btnOnePPT" type="button">PowerPoint</button>
@@ -1893,6 +1897,54 @@ map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"bottom-
 map.addControl(new maplibregl.ScaleControl({unit:"metric"}),"bottom-right");
 const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)",setback:"rgba(0,0,110,0.06)",fenceband:"rgba(47,58,64,0.05)",upper:"rgba(0,0,0,0)",core:"#5E6B78",sparefl:"#DCE2E8"};
 const EMPTY={type:"FeatureCollection",features:[]};
+/* ===== Site risk screening: bundled snapshots of active faults (GEM) and grid (OpenStreetMap),
+   loaded only when a site is screened, so nothing leaves the browser and normal use stays fast ===== */
+const RISK={data:null,loading:null,res:null,key:"",on:false};
+function riskLoad(){if(!RISK.loading){const j=u=>fetch(u).then(r=>r.ok?r.json():null).catch(()=>null);
+  RISK.loading=Promise.all([j("data/faults-ph.json"),j("data/grid-ph.json")]).then(([f,g])=>{
+    const bb=c=>{let a=[180,90,-180,-90];for(const p of c){a[0]=Math.min(a[0],p[0]);a[1]=Math.min(a[1],p[1]);a[2]=Math.max(a[2],p[0]);a[3]=Math.max(a[3],p[1]);}return a;};
+    if(f)f.faults.forEach(x=>x.b=bb(x.c));if(g)g.lines.forEach(x=>x.b=bb(x[3]));RISK.data={f,g};return RISK.data;});}
+  return RISK.loading;}
+function riskCompute(){const D=RISK.data,R0=state.ring;if(!D||!R0||R0.length<3)return null;
+  const c=R0.reduce((t,p)=>[t[0]+p[0]/R0.length,t[1]+p[1]/R0.length],[0,0]),kx=Math.cos(c[1]*Math.PI/180)*111.32,ky=110.57;
+  const P=p=>[(p[0]-c[0])*kx,(p[1]-c[1])*ky];
+  const segD=(a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy;let t=L?-(a[0]*dx+a[1]*dy)/L:0;t=Math.max(0,Math.min(1,t));return Math.hypot(a[0]+t*dx,a[1]+t*dy);};
+  const lineD=cs=>{let m=1e9;for(let i=0;i+1<cs.length;i++){const d=segD(P(cs[i]),P(cs[i+1]));if(d<m)m=d;}return cs.length===1?Math.hypot(...P(cs[0])):m;};
+  const near=(b,km)=>b[0]-km/kx<=c[0]&&b[2]+km/kx>=c[0]&&b[1]-km/ky<=c[1]&&b[3]+km/ky>=c[1];
+  const out={};
+  if(D.f){let best=null,n5=0;for(const f of D.f.faults){if(!near(f.b,150))continue;const d=lineD(f.c);if(d<5)n5++;if(!best||d<best.d)best={n:f.n,t:f.t,d};}out.fault=best;out.f5=n5;}
+  if(D.g){const S=D.g.subs.map(s=>({n:s[2],o:s[3],kv:s[4],d:Math.hypot(...P(s))})).sort((a,b)=>a.d-b.d);out.sub=S[0]||null;out.subHV=S.find(s=>s.kv>=115)||null;
+    let hv=null,mv=null;for(const l of D.g.lines){if(!near(l.b,80))continue;const d=lineD(l[3]);const o={kv:l[0],n:l[1],o:l[2],d};if(l[0]>=230){if(!hv||d<hv.d)hv=o;}else if(!mv||d<mv.d)mv=o;}out.hv=hv;out.mv=mv;}
+  const km=d=>d<1?fmt(d*1000,0)+" m":fmt(d,1)+" km";const lvl=(d,r,a)=>d==null?"n":d<r?"r":d<a?"a":"g";const rows=[];
+  const snm=s=>(s.n||"Unnamed substation")+(s.kv?" \u00b7 "+fmt(s.kv,0)+" kV":"")+(s.o?" \u00b7 "+s.o:"");
+  if(out.fault)rows.push(["Nearest mapped active fault: "+out.fault.n+(out.fault.t?" ("+out.fault.t.toLowerCase()+")":""),km(out.fault.d),lvl(out.fault.d,1,5)]);
+  if(D.f)rows.push(["Mapped active faults within 5 km",String(out.f5),out.f5?"a":"g"]);
+  if(out.sub)rows.push(["Nearest substation: "+snm(out.sub),km(out.sub.d),"n"]);
+  if(out.subHV&&out.subHV!==out.sub)rows.push(["Nearest 115 kV+ substation: "+snm(out.subHV),km(out.subHV.d),"n"]);
+  if(out.hv)rows.push(["Nearest 230 kV+ line"+(out.hv.n?": "+out.hv.n:"")+" \u00b7 "+fmt(out.hv.kv,0)+" kV",km(out.hv.d),"n"]);
+  if(out.mv)rows.push(["Nearest 69\u2013138 kV line"+(out.mv.n?": "+out.mv.n:"")+" \u00b7 "+fmt(out.mv.kv,0)+" kV",km(out.mv.d),"n"]);
+  out.rows=rows;out.c=c;return out;}
+function riskHTML(){const r=RISK.res;if(!state.ring||state.ring.length<3)return "";
+  if(!r)return `<div class="riskcard"><b class="t">Site risk (screening)</b><small><span class="spin"></span>Checking faults and grid\u2026</small></div>`;
+  const c=r.c;return `<div class="riskcard"><b class="t">Site risk (screening)</b><table>${r.rows.map(x=>`<tr><td><span class="rk ${x[2]}"></span>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>
+  <small>Straight-line from the site centre (${c[1].toFixed(5)}, ${c[0].toFixed(5)}). Faults: GEM Global Active Faults (CC BY-SA), regional scale; confirm the 5 m fault buffer, flood, landslide and liquefaction with PHIVOLCS <a href="https://hazardhunter.georisk.gov.ph/" target="_blank" rel="noopener">HazardHunterPH</a>. Grid: \u00a9 OpenStreetMap contributors (ODbL); capacity not shown, confirm with NGCP.</small></div>`;}
+let riskT=null;function riskUpdate(){clearTimeout(riskT);riskT=setTimeout(async()=>{if(!state.ring||state.ring.length<3)return;
+  const key=state.ring.map(p=>p[0].toFixed(4)+","+p[1].toFixed(4)).join(";");
+  if(key!==RISK.key||!RISK.res){await riskLoad();RISK.res=riskCompute();RISK.key=key;}
+  const el=$("riskCard");if(el)el.innerHTML=riskHTML();},300);}
+$("btnRisk").onclick=async()=>{RISK.on=!RISK.on;$("btnRisk").setAttribute("aria-pressed",String(RISK.on));$("btnRisk").classList.toggle("on",RISK.on);
+  if(RISK.on){const b=$("btnRisk"),t=b.textContent;b.innerHTML='<span class="spin"></span>Loading\u2026';const D=await riskLoad();b.textContent=t;
+    if(!map.getSource("rk-faults")){
+      const F=D.f?{type:"FeatureCollection",features:D.f.faults.map(f=>({type:"Feature",properties:{n:f.n},geometry:{type:"LineString",coordinates:f.c}}))}:EMPTY;
+      const L=D.g?{type:"FeatureCollection",features:D.g.lines.map(l=>({type:"Feature",properties:{kv:l[0],n:l[1]},geometry:{type:"LineString",coordinates:l[3]}}))}:EMPTY;
+      const S=D.g?{type:"FeatureCollection",features:D.g.subs.map(s=>({type:"Feature",properties:{n:s[2]||"Substation",kv:s[4]},geometry:{type:"Point",coordinates:[s[0],s[1]]}}))}:EMPTY;
+      map.addSource("rk-faults",{type:"geojson",data:F});map.addSource("rk-lines",{type:"geojson",data:L});map.addSource("rk-subs",{type:"geojson",data:S});
+      map.addLayer({id:"rk-lines",type:"line",source:"rk-lines",paint:{"line-color":["step",["get","kv"],"#7C8B99",115,"#2563EB",230,"#7C3AED",500,"#DB2777"],"line-width":["interpolate",["linear"],["zoom"],8,1,14,2.5],"line-opacity":.85}});
+      map.addLayer({id:"rk-faults",type:"line",source:"rk-faults",paint:{"line-color":"#B42318","line-width":["interpolate",["linear"],["zoom"],8,1.5,14,3.5],"line-dasharray":[3,1.5]}});
+      map.addLayer({id:"rk-subs",type:"circle",source:"rk-subs",paint:{"circle-radius":["interpolate",["linear"],["zoom"],8,2.5,14,6],"circle-color":"#F59E0B","circle-stroke-color":"#fff","circle-stroke-width":1.2}});
+      map.addLayer({id:"rk-labels",type:"symbol",source:"rk-subs",minzoom:12,layout:{"text-field":["get","n"],"text-size":11,"text-offset":[0,1.1],"text-anchor":"top"},paint:{"text-color":"#7A4A00","text-halo-color":"#fff","text-halo-width":1.4}});
+      map.addLayer({id:"rk-flabels",type:"symbol",source:"rk-faults",minzoom:10,layout:{"symbol-placement":"line","text-field":["get","n"],"text-size":11},paint:{"text-color":"#B42318","text-halo-color":"#fff","text-halo-width":1.4}});}}
+  ["rk-lines","rk-faults","rk-subs","rk-labels","rk-flabels"].forEach(k=>{if(map.getLayer(k))map.setLayoutProperty(k,"visibility",RISK.on?"visible":"none");});};
 /* ===== Zone hover: margins and clear zones explain themselves and link to the setting that makes them ===== */
 const ZINFO={
   setback:{t:"Setback",v:()=>vv("setback")+" m from the boundary, set by zoning",sec:1,f:"setback",how:"Site \u2192 Zoning limits \u2192 Setback"},
@@ -2154,7 +2206,7 @@ function runSolve(coarse,optimise,ov,budget,probe){
   state.result=res;state.F=F;state.o=o;
   if(!coarse){state.opt=0;} state.opt=Math.min(state.opt,res.options.length-1);
   state.lastDeg=res.options[state.opt].deg;
-  renderLayout();renderLive(coarse);if(!coarse)renderSpec();
+  renderLayout();renderLive(coarse);if(!coarse){renderSpec();riskUpdate();}
 }
 /* with a building mix set, the target is the mix total, not the target field */
 function targetOf(o){return (o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;}
@@ -2375,6 +2427,7 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
   ${B.placeholder?'<div class="banner">Placeholder design values. Import your basis of design profile before relying on these numbers.</div>':''}
   ${o.density!=="ent"?'<div class="banner">AI-ready values are indicative industry assumptions.</div>':''}
   ${B.placeholder?"":devHTML()}
+  <div id="riskCard">${riskHTML()}</div>
   ${state.closure>1?`<p class="flag">Title courses do not close by ${fmt(state.closure,2)} m.</p>`:""}
   <div class="limit${op.it>=targetOf(o)-0.05?" ok":""}">${esc(op.limit)}</div>${op.flags.map(f=>`<p class="flag">${esc(f)}</p>`).join("")}
   ${op.built.length?(()=>{const ph=(op.phases&&op.phases.length)?op.phases:op.built.map(s=>({s,pinned:false}));let cum=0;
@@ -3019,10 +3072,10 @@ function onePagerData(){
   return {title:$("projName").value.trim()||"Data centre concept",
     sub:[(o.profile==="metro"?"Metro":"Campus"),btxt,dtxt,etxt].join(" · "),
     headline:[[fmt(op.it,0)+" MW","IT load (target "+fmt(targetOf(o),0)+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
-    spec,phases:ph,dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]),
+    spec,phases:ph,dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]).concat(RISK.res?RISK.res.rows.map(r=>[r[0],r[1]]):[]),
     limit:op.limit,flags:op.flags.filter(f=>!/deviation from the basis of design/i.test(f)).slice(0,2),bod:B.name,placeholder:!!B.placeholder,
     date:new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"}),
-    credit:state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors"};}
+    risk:RISK.res?RISK.res.rows:[],credit:(RISK.res?"Faults: GEM (CC BY-SA). Grid: \u00a9 OpenStreetMap (ODbL). ":"")+(state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors")};}
 async function onePagerPDF(){
   if(!state.result){status("Generate a layout first.");return;}
   const w=window.open("","_blank");if(!w){status("Allow pop-ups for this page to open the one-pager.");return;}
