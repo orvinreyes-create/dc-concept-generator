@@ -26,6 +26,7 @@ h2{font:600 17px/1.2 "Barlow Condensed",sans-serif;margin:16px 0 6px}
 label{display:block;font-size:13px;color:var(--muted);margin:7px 0 3px}
 input,select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:6px 8px}
 textarea{min-height:80px;font-size:13px}
+.projsort{display:flex;align-items:center;gap:8px;margin:8px 0 4px}.projsort label{font-size:12px;color:var(--muted)}.projsort select{flex:1;padding:4px 6px}#projList li.current{background:#EEEEF7;box-shadow:inset 3px 0 0 #00006E;padding-left:8px;border-radius:3px}#projList li.current>span:first-child{font-weight:600;color:#00006E}.pnow{display:inline-block;font:600 10px/1 Barlow,sans-serif;letter-spacing:.05em;text-transform:uppercase;background:#00006E;color:#fff;padding:3px 5px;border-radius:3px;margin-right:6px;vertical-align:1px}.pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
 .seg button{flex:1;border:0;background:transparent;color:var(--ink);padding:7px 4px;font:inherit;font-size:14px;cursor:pointer}
@@ -165,6 +166,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     </div>
     <button class="btn" id="exportProj" type="button" style="width:100%;margin-top:6px">Export project file</button>
     <input type="file" id="projFile" accept=".json,application/json" hidden>
+    <div class="projsort" id="projSortWrap"><label for="projSort">Sort</label><select id="projSort"><option value="name">Name (A–Z)</option><option value="created">Newest first</option><option value="updated">Recently saved</option><option value="mw">Capacity (largest first)</option></select></div>
     <ul class="projects" id="projList"></ul>
   </details>
 
@@ -2904,7 +2906,7 @@ $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
   const _op=state.result&&state.result.options[state.opt];
-  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),mw:_op?+(+_op.it).toFixed(1):0,targetMW:+$("targetMW").value||0,profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,opt:!!p.view.opt}:null;state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
@@ -2913,13 +2915,25 @@ function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,op
   $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
   $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();state.subPinning=false;drawSubPin();
   $("hrLoc").value=p.hrLoc||"roof";$("oneSide").checked=!!p.oneSide;$("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
-  state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);
+  state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);drawProjects();
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
-function drawProjects(){const l=lsGet(LS_PROJ,[]);
-  $("projList").innerHTML=l.length?l.map((p,i)=>`<li><span>${esc(p.name)}</span><span><button data-o="${i}">Open</button><button data-d="${i}">Delete</button></span></li>`).join(""):'<li class="hint">No saved projects on this device.</li>';
+const pMW=p=>p.mw!=null?p.mw:(+((p.values||{}).targetMW)||0);
+const pDate=d=>d?new Date(d).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}):"";
+function drawProjects(){if(!$("projSort"))return;const l=lsGet(LS_PROJ,[]);const k=$("projSort").value;
+  const idx=l.map((p,i)=>i).sort((a,b)=>{const A=l[a],B=l[b];
+    if(k==="mw")return pMW(B)-pMW(A)||A.name.localeCompare(B.name);
+    if(k==="created")return String(B.created||B.saved||"").localeCompare(String(A.created||A.saved||""));
+    if(k==="updated")return String(B.saved||"").localeCompare(String(A.saved||""));
+    return A.name.localeCompare(B.name,undefined,{numeric:true,sensitivity:"base"});});
+  $("projSortWrap").hidden=l.length<2;
+  const cur=$("projName").value.trim()||"Untitled site";
+  $("projList").innerHTML=l.length?idx.map(i=>{const p=l[i],on=p.name===cur;return `<li${on?' class="current" aria-current="true"':''}><span>${on?'<b class="pnow">Open now</b>':''}${esc(p.name)}<small class="pmeta">${fmt(pMW(p),0)} MW · ${pDate(p.created||p.saved)}</small></span><span>${on?'':`<button data-o="${i}">Open</button>`}<button data-d="${i}">Delete</button></span></li>`;}).join(""):'<li class="hint">No saved projects on this device.</li>';
   $("projList").querySelectorAll("[data-o]").forEach(b=>b.onclick=()=>restore(l[+b.dataset.o]));
   $("projList").querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{l.splice(+b.dataset.d,1);lsSet(LS_PROJ,l);drawProjects();});}
-$("saveLocal").onclick=()=>{const s=snapshot(),l=lsGet(LS_PROJ,[]).filter(p=>p.name!==s.name);l.push(s);status(lsSet(LS_PROJ,l)?"Saved on this device.":"This browser blocked storage.");drawProjects();};
+$("projName").addEventListener("input",()=>drawProjects());
+$("projSort").onchange=()=>{try{localStorage.setItem("dccg.projSort",$("projSort").value)}catch(e){}drawProjects();};
+try{const v=localStorage.getItem("dccg.projSort");if(v)$("projSort").value=v;}catch(e){}
+$("saveLocal").onclick=()=>{const s=snapshot(),old=lsGet(LS_PROJ,[]),prev=old.find(p=>p.name===s.name);s.created=(prev&&(prev.created||prev.saved))||s.saved;const l=old.filter(p=>p.name!==s.name);l.push(s);status(lsSet(LS_PROJ,l)?"Saved on this device.":"This browser blocked storage.");drawProjects();};
 $("exportProj").onclick=()=>download((snapshot().name).replace(/[^\w\-]+/g,"-")+".dccg.json",JSON.stringify(snapshot(),null,1),"application/json");
 $("importProj").onclick=()=>$("projFile").click();
 $("projFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const p=JSON.parse(await f.text());if(p.app!=="dccg")throw new Error("Not a project file.");restore(p);}catch(err){status("Could not open project: "+err.message);}e.target.value="";};
