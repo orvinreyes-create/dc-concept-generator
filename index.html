@@ -834,7 +834,8 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
   if(up){zonesUp=[];ZO=zonesUp;hallDepth=0;layBands({dock:0,admin:up.admin,hall:up.hall,crit:up.crit,ec:up.ec,spare:Math.max(0,F-up.admin-up.hall-up.crit-up.ec)},"","Admin (upper floors)");ZO=zones;
     /* freight lift and stair core: a compact shaft on the street face, above the loading dock, running full height */
     const sd=Math.max(6,Math.min(14,Math.sqrt(up.core))),cx=(r[0]+r[2])/2,cy=(r[1]+r[3])/2;
-    coreRect=front==="bottom"?[cx-sd/2,r[1],cx+sd/2,r[1]+sd]:front==="top"?[cx-sd/2,r[3]-sd,cx+sd/2,r[3]]:front==="left"?[r[0],cy-sd/2,r[0]+sd,cy+sd/2]:[r[2]-sd,cy-sd/2,r[2],cy+sd/2];}
+    const pr=0.8;/* stands proud of the facade so its faces never share a plane with the building */
+    coreRect=front==="bottom"?[cx-sd/2,r[1]-pr,cx+sd/2,r[1]+sd]:front==="top"?[cx-sd/2,r[3]-sd,cx+sd/2,r[3]+pr]:front==="left"?[r[0]-pr,cy-sd/2,r[0]+sd,cy+sd/2]:[r[2]-sd,cy-sd/2,r[2]+pr,cy+sd/2];}
   /* dock apron and access spur, in the strip between building and street */
   const ax=m[4]-m[2],ay=m[5]-m[3],al=Math.hypot(ax,ay)||1,ux=ax/al,uy=ay/al;
   const c=centroidOf(bestFit.P);
