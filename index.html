@@ -257,6 +257,8 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     </select>
     <label id="lbl-elecPlant">Electrical plant</label>
     <div class="seg" id="segElec"><button data-v="EROOM" aria-pressed="true">EROOM</button><button data-v="EMOD" aria-pressed="false">EMOD</button></div>
+    <label for="adminSqm">Admin area per building (sqm)</label>
+    <input id="adminSqm" type="number" min="0" step="50" placeholder="Basis of design">
     <h3>Building mix</h3>
     <div id="mixRows"></div>
     <div class="btns">
@@ -461,7 +463,7 @@ function buildingSpec(m,o,B,dens,form,Dset){
   const racks=Math.round(m*1000/d.kw), hall=racks*d.sqmRack;
   const gross=hall*B.circFactor+E.crit*m, foot=gross/o.storeys;
   const D=Dset>0?Dset:Math.max(30,Math.min(75,Math.sqrt(foot/2)));
-  const L=foot/D, adminFoot=E.admin/3, La=Math.max(18,adminFoot/D), ecLevels=(B.ecLevels>0?B.ecLevels:o.storeys), ecFoot=E.ecPerMW*m/Math.max(1,ecLevels);
+  const L=foot/D, adminFoot=(o.adminSqm>0?o.adminSqm:E.admin)/3, La=Math.max(18,adminFoot/D), ecLevels=(B.ecLevels>0?B.ecLevels:o.storeys), ecFoot=E.ecPerMW*m/Math.max(1,ecLevels);
   const roofShare=(B.roofShare>0&&B.roofShare<=1)?B.roofShare:0.9;
   const tiers=Math.min(2,Math.max(1,Math.round(o.roofTiers||B.roofTiers||1)));
   /* ground heat rejection: all chillers in a detached yard, none on the roof */
@@ -720,7 +722,7 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
   const mw=mwOverride!=null?mwOverride:(o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;
   const d=B.density[dens],E=B.elec[o.elec];
   const racks=Math.round(mw*1000/d.kw), hall=racks*d.sqmRack;
-  const hallGfa=hall*B.circFactor, crit=E.crit*mw, ec=E.ecPerMW*mw, admin=E.admin;
+  const hallGfa=hall*B.circFactor, crit=E.crit*mw, ec=E.ecPerMW*mw, admin=o.adminSqm>0?o.adminSqm:E.admin;
   const totalGfa=hallGfa+crit+ec+admin;
   const capCov=siteArea*o.maxCov/100;
   let bestFit=null;
@@ -766,20 +768,25 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
   /* the street either faces the flat side of the bands, or their ends */
   const streetOnStack=spanIsW?(front==="bottom"||front==="top"):(front==="left"||front==="right");
   const W=spanLen;
-  let storeys=Math.max(1,Math.ceil(totalGfa/F)),bands=null;
-  for(let guard=0;guard<60;guard++){
-    const dock=Math.min(Math.max(350,W*10),F*0.2);
-    const adminPF=admin/storeys, ecPF=ec/storeys, critPF=crit/storeys;
-    const hallPF=F-dock-adminPF-ecPF-critPF;
-    if(hallPF>=F*0.25){bands={dock:dock,admin:adminPF,ec:ecPF,crit:critPF,hall:hallPF};break;}
-    storeys++;
-  }
-  if(!bands) return null;
+  /* Stacking: the ground floor takes the dock and the admin block (lobby, security,
+     offices); whatever ground floor is left takes electrical and mechanical rooms,
+     then data halls. Upper floors are data halls with their electrical and
+     mechanical rooms around a freight lift core; admin that does not fit on the
+     ground floor spills up. */
+  const dockG=Math.min(Math.max(350,W*10),F*0.2), core=Math.min(150,Math.max(60,F*0.05));
+  const adminG=Math.min(admin,Math.max(0,F-dockG)), adminX=admin-adminG;
+  const L0=Math.max(0,F-dockG-adminG), gPlant=Math.min(L0,crit+ec), gHall=Math.min(L0-gPlant,hallGfa);
+  const upNeed=(hallGfa-gHall)+(crit+ec-gPlant)+adminX, U=F-core;
+  if(U<=F*0.3) return null;
+  const nUp=upNeed>1?Math.ceil(upNeed/U):0, storeys=1+nUp;
+  const gc=crit+ec>0?crit/(crit+ec):0;
+  const bands={dock:dockG,admin:adminG,crit:gPlant*gc,ec:gPlant*(1-gc),hall:gHall};
+  const up=nUp?{hall:(hallGfa-gHall)/nUp,crit:(crit-gPlant*gc)/nUp,ec:(ec-gPlant*(1-gc))/nUp,admin:adminX/nUp,core:core}:null;
   /* the chiller deck sits over the data halls and mechanical rooms, never
      over the electrical rooms */
   const roofShare=(B.roofShare>0&&B.roofShare<=1.5)?B.roofShare:0.9;
   const tiers=Math.min(2,Math.max(1,Math.round(o.roofTiers||B.roofTiers||1)));
-  const hrNeed=d.hr*mw, roofCap=(bands.hall+bands.crit)*roofShare*tiers;
+  const hrNeed=d.hr*mw, roofCap=(up?up.hall+up.crit:bands.hall+bands.crit)*roofShare*tiers;
   const plantFloors=Math.max(0,Math.ceil((hrNeed-roofCap)/F));
   const height=(storeys+plantFloors)*B.floorM+B.roofPlantM+1.5;
   const zones=[];
@@ -798,7 +805,7 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     let acc=0;
     for(const [kind,ar,name] of [["apron",bands.dock,"Dock and freight core"],["admin",bands.admin,"Admin and lobby"],
         ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]]){
-      const t=ar/spanLen, k=K(acc,acc+t);
+      if(ar<1)continue;const t=ar/spanLen, k=K(acc,acc+t);
       if(kind==="hall") hallDepth=t;
       put(0,spanLen,k[0],k[1],kind,name,ar); acc+=t;}
   } else {
@@ -813,7 +820,7 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     const rest=S(endCol,spanLen);
     let acc=0;
     for(const [kind,ar,name] of [["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]]){
-      const t=ar/(spanLen-endCol), k=K(acc,acc+t);
+      if(ar<1)continue;const t=ar/(spanLen-endCol), k=K(acc,acc+t);
       if(kind==="hall") hallDepth=t;
       put(rest[0],rest[1],k[0],k[1],kind,name,ar); acc+=t;}
   }
@@ -834,7 +841,7 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     ecFoot:ec,adminGfa:admin,roofHR:Math.min(hrNeed,roofCap),roofCap,spill:Math.max(0,hrNeed-roofCap),
     liquid:d.liquid,rackKg:d.rackKg,pue:B.pue[o.profile][dens],height:height,
     storeys:storeys,plantFloors:plantFloors,infill:true,hallDepth:hallDepth,bandAxis:(o.bandAxis||"auto"),
-    typicalHall:F-(admin+ec+crit)/storeys,
+    typicalHall:up?up.hall:bands.hall,upper:up,adminGround:adminG,
     apronDepth:depth,apronShort:depth<o.dockApron*0.6,W:W,D:F/W,bands:bands};
   const roads=[{a:[m[0],m[1]],b:dockC,w:Math.max(6,o.road*0.75),kind:"access"}];
   return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,dock:dockQuad,roads:roads,placed:[],
@@ -1244,9 +1251,10 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(!r.subOK) flags.push("Substation ("+fmt(subArea,0)+" sqm, any shape from square to "+(o.subAspect>0?o.subAspect:4)+":1, no side under "+(o.subMinSide>0?o.subMinSide:30)+" m, plus a "+(o.subMargin>=0?o.subMargin:(B.subMargin>=0?B.subMargin:8))+" m fence margin) does not fit in the space the buildings and their "+YARD_CLEAR+" m yard clearances leave. Try Optimise, fewer or larger buildings, or pin a building to free a corner.");
   if(!r.pondOK) flags.push("Stormwater retention does not fit at grade. Consider underground tanks.");
   if(!r.supOK) flags.push("Parking and support yards ("+fmt(supportArea,0)+" sqm, tried as one yard or two, no side under 16 m) do not fit. Try Optimise, or allow for parking inside the buildings.");
+  {const Ag=B.elec[o.elec].admin;if(o.adminSqm>0&&o.adminSqm<Ag-1)flags.push("Admin set to "+fmt(o.adminSqm,0)+" sqm per building, below the GRD\u2019s "+fmt(Ag,0)+" sqm. Record this as a deviation from the basis of design and confirm the admin functions still fit.");}
   if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
   if(infill){const s0=L[0];
-    flags.push("The plan shows the ground floor. Upper floors carry more hall area once the dock and lobby are excluded.");
+    flags.push("The plan shows the ground floor: dock, lobby and admin"+(s0.bands&&s0.bands.hall>1?", with data halls in the remaining space":"")+". "+(s0.upper?"Floors 2 to "+s0.storeys+" are data halls ("+fmt(s0.upper.hall,0)+" sqm each) with electrical and mechanical rooms around a freight lift core"+(s0.upper.admin>1?", plus "+fmt(s0.upper.admin,0)+" sqm of admin per floor that did not fit on the ground floor":"")+".":""));
     flags.push("Infill massing: the building fills the plot and stacks "+s0.storeys+" floors"+(s0.plantFloors?" plus "+s0.plantFloors+" plant floor"+(s0.plantFloors>1?"s":""):"")+". Electrical and mechanical rooms sit inside the building.");
     if(s0.hallDepth&&s0.hallDepth<12) flags.push("The ground-floor hall band is only "+fmt(s0.hallDepth,0)+" m deep, which takes "+Math.floor(s0.hallDepth/6)+" rack row at the GRD's 6 m pitch. Try the other zone band direction.");
     if(s0.apronShort) flags.push("Only "+fmt(s0.apronDepth,0)+" m of yard is available between the street and the building, short of a "+o.dockApron+" m apron, so the dock and ramp are shown inside the footprint as urban designs normally do.");
@@ -1283,7 +1291,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
       ["IT load",fmt(it,0)+" MW","itLoad"],["Facility load at PUE "+fmt(pueEff,2),fmt(fac,1)+" MW","facLoad"],
       ["Racks",fmt(sum(s=>s.racks),0),"racks"],
       ["Data hall area",fmt(sum(s=>s.hall),0)+" sqm","hallArea"],["Gross floor area, data buildings",fmt(sum(s=>s.gross),0)+" sqm","gfa"],
-      ["Admin gross floor area",fmt(infill?sum(s=>s.adminGfa||0):L.length*B.elec[o.elec].admin,0)+" sqm","adminGfa"],
+      ["Admin gross floor area",fmt(infill?sum(s=>s.adminGfa||0):L.length*(o.adminSqm>0?o.adminSqm:B.elec[o.elec].admin),0)+" sqm"+(o.adminSqm>0&&Math.abs(o.adminSqm-B.elec[o.elec].admin)>1?" (GRD "+fmt(B.elec[o.elec].admin,0)+")":""),"adminGfa"],
       ["Truck docks",fmt(L.length*2,0)+" ("+fmt(L.length,0)+" × 2)","docksRow"],
       ["Typical floor plate",infill?fmt(L[0].foot,0)+" sqm ("+fmt(L[0].W,0)+" \u00D7 "+fmt(L[0].D,0)+" m)":"\u2014","plateRow"],
       ["Building footprint",fmt(sum(s=>s.foot+s.adminFoot+(infill?0:s.ecFoot)),0)+" sqm","footprint"],
@@ -1323,6 +1331,7 @@ circulation:"How roads are generated. Internal runs a spine drive through the mi
 oneSide:"For linear and compact linear buildings: keep the road only along the loading-dock side, with a narrow maintenance strip on the other sides, instead of a road and yard clearance all round. Matches long, narrow existing sites; confirm fire-engine access with the local fire marshal.",
 padInSetback:"When on, only the structures themselves (data buildings, energy centres, substation, retention) must stay behind the setback line. Their road and yard clearances, the internal roads and the parking may use the setback band, as driveways and open hardstanding usually can. Turn off for the strictest reading, where everything stays behind the line.",
 fenceInset:"How far inside the property line the security fence runs. 0 puts it on the boundary.",
+adminSqm:"Gross floor area of the admin block in each building: lobby, security, network operations room, offices and staff facilities. Leave blank to use the basis of design. A lower figure is flagged as a deviation. In infill buildings the admin sits on the ground floor.",
 clearZone:"A band inside the fence kept clear of everything except the gate drive, so the fence can be watched and patrolled.",
 yardClear:"Clear distance kept around each building\u2019s external electrical and mechanical yards, which also sets the gap between neighbouring buildings\u2019 plant sides. The GRD uses 15 m; a smaller figure packs buildings closer but needs fire-engineering and maintenance-access sign-off.",
 roofTiers:"Levels of the roof chiller deck. 1 is the GRD baseline (air-cooled chillers on one gantry level). 2 is the BOD\u2019s stacked option, with water-cooled chillers and dry air coolers on two roof levels (R2 and R3), which roughly doubles the heat rejection the roof can carry and adds about 6 m of height.",
@@ -1540,6 +1549,7 @@ function validateBOD(p){
 }
 function drawBOD(){
   const list=profiles(), act=activeBOD();
+  try{$("adminSqm").placeholder="Basis of design: "+fmt(act.elec[state.elec].admin,0);}catch(e){}
   $("bodSelect").innerHTML=list.map(p=>`<option value="${p.id}" ${p.id===act.id?"selected":""}>${esc(p.name)}</option>`).join("");
   const pill=$("bodPill");
   if(act.placeholder){pill.className="pill placeholder";pill.textContent="Using placeholder values. Import your profile before screening real sites.";}
@@ -1805,7 +1815,7 @@ function readOpts(){const g=id=>parseFloat($(id).value),B=activeBOD();
     storeys:Math.max(1,Math.round(g("storeys"))),sqmRack:g("sqmRack"),pue:g("pue"),liquid:g("liquid"),rackKg:g("rackKg"),hrPerMW:g("hrPerMW"),bldgMax:g("bldgMax"),
     pond:g("pondPct"),road:g("roadW"),dockApron:g("dockApron"),circulation:$("circulation").value,
     oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,massing:$("massing").value,faceGate:$("faceGate").checked,ecPos:$("ecPos").value,subPinLL:state.subPinLL,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,fenceInset:Math.max(0,g("fenceInset")||0),clearZone:$("fenceOn").checked?Math.max(0,g("clearZone")||0):0,bandAxis:$("bandAxis").value,frontLL:state.frontLL,roadsLL:state.roadsLL,pinsLL:state.pins.slice(),
-    mix:state.mix.length?state.mix.slice():null,supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear"),subAspect:g("subAspect")||4,subMinSide:g("subMinSide")||30};}
+    mix:state.mix.length?state.mix.slice():null,adminSqm:Math.max(0,g("adminSqm")||0),supportSqm:Math.max(0,g("supportSqm")),subSqm:Math.max(0,g("subSqm")||0),subMargin:Math.max(0,g("subMargin")),roofTiers:Math.min(2,Math.max(1,Math.round(g("roofTiers")||1))),yardClear:g("yardClear"),subAspect:g("subAspect")||4,subMinSide:g("subMinSide")||30};}
 
 /* ===== Map ===== */
 const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,maxPitch:78,preserveDrawingBuffer:true,attributionControl:{compact:true},
@@ -2277,7 +2287,7 @@ function renderLayout(){
     labels.push(new maplibregl.Marker({element:el}).setLngLat(toLL(op.gate.edge[0],op.gate.edge[1])).addTo(map));}
 }
 function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
-  $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,0)} / ${fmt(targetOf(o),0)}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${((op.rows||[]).find(r=>r[2]==="racks")||[])[1]||"—"}</b><small>racks</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
+  $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,Math.abs(op.it-Math.round(op.it))>0.05?1:0)} / ${fmt(targetOf(o),0)}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${((op.rows||[]).find(r=>r[2]==="racks")||[])[1]||"—"}</b><small>racks</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
   <div class="lim">${coarse?"Updating… ":""}${esc(op.limit)}${op.flags.length?` <span style="color:var(--bad)">${op.flags.length} flag${op.flags.length>1?"s":""}</span>`:""}</div>`;}
 function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activeBOD(),n=state.result.options.length;
   $("results").innerHTML=`<h2>Spec sheet, option ${String.fromCharCode(65+state.opt)} of ${n}</h2>
@@ -3005,7 +3015,7 @@ $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 /* ===== Projects ===== */
 function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
   const _op=state.result&&state.result.options[state.opt];
-  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),mw:_op?+(+_op.it).toFixed(1):0,targetMW:+$("targetMW").value||0,profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),adminSqm:$("adminSqm").value,mw:_op?+(+_op.it).toFixed(1):0,targetMW:+$("targetMW").value||0,profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,opt:!!p.view.opt}:null;state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
@@ -3013,7 +3023,7 @@ function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,op
   state.editRoads=false;state.rsel=-1;$("btnRoads").textContent="Edit roads";$("btnRoads").setAttribute("aria-pressed","false");
   $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
   $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();state.subPinning=false;drawSubPin();
-  $("hrLoc").value=p.hrLoc||"roof";$("oneSide").checked=!!p.oneSide;$("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
+  $("hrLoc").value=p.hrLoc||"roof";$("adminSqm").value=p.adminSqm||"";$("oneSide").checked=!!p.oneSide;$("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
   state.ring=p.ring;state.sel=-1;buildHandles();fitRing();schedule(false);drawProjects();drawSums();
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
 const pMW=p=>p.mw!=null?p.mw:(+((p.values||{}).targetMW)||0);
@@ -3039,10 +3049,10 @@ $("projName").addEventListener("input",()=>drawProjects());
 /* ===== Sidebar accordion: one section open at a time; closed sections show a one-line summary ===== */
 const optTxt=id=>{const e=$(id);return e&&e.options?e.options[e.selectedIndex].text.replace(/\s*\([^)]*\)/g,""):"";};
 const segTxt=id=>{const b=$(id)&&$(id).querySelector('[aria-pressed="true"]');return b?b.textContent.trim():"";};
-function drawSums(){try{const v=id=>$(id)?$(id).value:"";const j=a=>a.filter(Boolean).join(" · ");
+function drawSums(){try{try{$("adminSqm").placeholder="Basis of design: "+fmt(activeBOD().elec[state.elec].admin,0);}catch(e){}const v=id=>$(id)?$(id).value:"";const j=a=>a.filter(Boolean).join(" · ");
   $("sum1").textContent=j([v("projName").trim()||"Untitled site",typeof FS!=="undefined"&&FS.ok?"Folder: "+FS.name:"This browser"]);
   $("sum2").textContent=j([segTxt("segProfile"),v("storeys")&&v("storeys")+" storeys",v("maxCov")&&v("maxCov")+"% cover",v("setback")&&v("setback")+" m setback"]);
-  $("sum3").textContent=j([v("targetMW")&&v("targetMW")+" MW target",optTxt("density"),segTxt("segElec"),state.mix&&state.mix.length?state.mix.length+" building"+(state.mix.length>1?"s":"")+" set":""]);
+  $("sum3").textContent=j([v("targetMW")&&v("targetMW")+" MW target",optTxt("density"),segTxt("segElec"),+$("adminSqm").value>0?"admin "+$("adminSqm").value+" sqm":"",state.mix&&state.mix.length?state.mix.length+" building"+(state.mix.length>1?"s":"")+" set":""]);
   $("sum4").textContent=j([optTxt("massing"),optTxt("circulation"),optTxt("hrLoc")]);
   $("sum5").textContent=j([v("pue")&&"PUE "+v("pue"),v("bldgMax")&&v("bldgMax")+" MW max/bldg",v("roadW")&&v("roadW")+" m roads"]);
   $("sum6").textContent=activeBOD().placeholder?"No profile loaded":activeBOD().name;}catch(e){}}
