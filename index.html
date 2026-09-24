@@ -792,19 +792,21 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
   const zones=[];
   let hallDepth=0;
   /* place a rectangle by span offset / stack offset, in the rect's own frame */
+  let ZO=zones;
   const put=(s0,s1,k0,k1,kind,name,ar)=>{
     const q=spanIsW?[r[0]+s0,r[1]+k0,r[0]+s1,r[1]+k1]:[r[0]+k0,r[1]+s0,r[0]+k1,r[1]+s1];
-    zones.push({r:q,kind:kind,name:name,area:ar});};
+    ZO.push({r:q,kind:kind,name:name,area:ar});};
   /* stack runs away from the street when the street faces the bands */
   const flipStack=(front==="top"||front==="right");
   const K=(a,b)=>flipStack?[stackLen-b,stackLen-a]:[a,b];
   const flipSpan=(front==="right"||front==="top");
   const S=(a,b)=>flipSpan?[spanLen-b,spanLen-a]:[a,b];
+  const layBands=(bands,DN,AN)=>{
   if(streetOnStack){
     /* dock, admin, halls, mechanical, electrical as bands back from the street */
     let acc=0;
-    for(const [kind,ar,name] of [["apron",bands.dock,"Dock and freight core"],["admin",bands.admin,"Admin and lobby"],
-        ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]]){
+    for(const [kind,ar,name] of [["apron",bands.dock,DN],["admin",bands.admin,AN],
+        ["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"],["spare",bands.spare||0,"Spare floor space"]]){
       if(ar<1)continue;const t=ar/spanLen, k=K(acc,acc+t);
       if(kind==="hall") hallDepth=t;
       put(0,spanLen,k[0],k[1],kind,name,ar); acc+=t;}
@@ -815,15 +817,18 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     const dockDepth=stackLen*bands.dock/(bands.dock+bands.admin);
     const e=S(0,endCol);
     const kd=K(0,dockDepth), ka=K(dockDepth,stackLen);
-    put(e[0],e[1],kd[0],kd[1],"apron","Dock and freight core",bands.dock);
-    put(e[0],e[1],ka[0],ka[1],"admin","Admin and lobby",bands.admin);
+    put(e[0],e[1],kd[0],kd[1],"apron",DN,bands.dock);
+    if(bands.admin>=1)put(e[0],e[1],ka[0],ka[1],"admin",AN,bands.admin);
     const rest=S(endCol,spanLen);
     let acc=0;
-    for(const [kind,ar,name] of [["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"]]){
+    for(const [kind,ar,name] of [["hall",bands.hall,"Data halls"],["yard",bands.crit,"Mechanical rooms"],["ec",bands.ec,"Electrical rooms"],["spare",bands.spare||0,"Spare floor space"]]){
       if(ar<1)continue;const t=ar/(spanLen-endCol), k=K(acc,acc+t);
       if(kind==="hall") hallDepth=t;
       put(rest[0],rest[1],k[0],k[1],kind,name,ar); acc+=t;}
-  }
+  }};
+  const hd0=()=>hallDepth;layBands(bands,"Dock and freight core","Admin and lobby");const gHallDepth=hallDepth;
+  let zonesUp=null;
+  if(up){zonesUp=[];ZO=zonesUp;hallDepth=0;layBands({dock:up.core,admin:up.admin,hall:up.hall,crit:up.crit,ec:up.ec,spare:Math.max(0,F-up.core-up.admin-up.hall-up.crit-up.ec)},"Freight lift core","Admin (upper floors)");ZO=zones;}
   /* dock apron and access spur, in the strip between building and street */
   const ax=m[4]-m[2],ay=m[5]-m[3],al=Math.hypot(ax,ay)||1,ux=ax/al,uy=ay/al;
   const c=centroidOf(bestFit.P);
@@ -844,7 +849,7 @@ function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
     typicalHall:up?up.hall:bands.hall,upper:up,adminGround:adminG,
     apronDepth:depth,apronShort:depth<o.dockApron*0.6,W:W,D:F/W,bands:bands};
   const roads=[{a:[m[0],m[1]],b:dockC,w:Math.max(6,o.road*0.75),kind:"access"}];
-  return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,dock:dockQuad,roads:roads,placed:[],
+  return {deg:bestFit.deg,a:bestFit.a,type:"infill",rect:r,zones:zones,zonesUp:zonesUp,dock:dockQuad,roads:roads,placed:[],
     mw:mw,built:[spec],specs:[spec],subOK:true,pondOK:true,supOK:true,cov:F/siteArea*100,storeys:storeys+plantFloors,
     gate:{edge:[m[0],m[1]],node:dockC,w:6},roadArea:roads.reduce((t,x)=>t+segLen(x)*x.w,0),targetMW:mw,
     score:1e9+mw*1e6-1e3};}
@@ -1254,9 +1259,9 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   {const Ag=B.elec[o.elec].admin;if(o.adminSqm>0&&o.adminSqm<Ag-1)flags.push("Admin set to "+fmt(o.adminSqm,0)+" sqm per building, below the GRD\u2019s "+fmt(Ag,0)+" sqm. Record this as a deviation from the basis of design and confirm the admin functions still fit.");}
   if(maxHt>o.maxH) flags.push("Height about "+maxHt.toFixed(0)+" m exceeds the "+o.maxH+" m limit"+(infill?". Reduce the target load or raise the limit.":". Reduce storeys."));
   if(infill){const s0=L[0];
-    flags.push("The plan shows the ground floor: dock, lobby and admin"+(s0.bands&&s0.bands.hall>1?", with data halls in the remaining space":"")+". "+(s0.upper?"Floors 2 to "+s0.storeys+" are data halls ("+fmt(s0.upper.hall,0)+" sqm each) with electrical and mechanical rooms around a freight lift core"+(s0.upper.admin>1?", plus "+fmt(s0.upper.admin,0)+" sqm of admin per floor that did not fit on the ground floor":"")+".":""));
+    flags.push(s0.upper?"The plan shows a typical upper floor (floors 2 to "+s0.storeys+"): "+fmt(s0.upper.hall,0)+" sqm of data halls with electrical and mechanical rooms around a freight lift core"+(s0.upper.admin>1?", plus "+fmt(s0.upper.admin,0)+" sqm of admin that did not fit on the ground floor":"")+". The ground floor holds the dock, lobby and "+fmt(s0.adminGround||0,0)+" sqm of admin"+(s0.bands&&(s0.bands.ec+s0.bands.crit)>1?", with "+fmt(s0.bands.ec+s0.bands.crit,0)+" sqm of electrical and mechanical rooms":"")+(s0.bands&&s0.bands.hall>1?" and "+fmt(s0.bands.hall,0)+" sqm of data halls":"")+".":"The plan shows the single floor: dock, lobby, admin, data halls, electrical and mechanical rooms.");
     flags.push("Infill massing: the building fills the plot and stacks "+s0.storeys+" floors"+(s0.plantFloors?" plus "+s0.plantFloors+" plant floor"+(s0.plantFloors>1?"s":""):"")+". Electrical and mechanical rooms sit inside the building.");
-    if(s0.hallDepth&&s0.hallDepth<12) flags.push("The ground-floor hall band is only "+fmt(s0.hallDepth,0)+" m deep, which takes "+Math.floor(s0.hallDepth/6)+" rack row at the GRD's 6 m pitch. Try the other zone band direction.");
+    if(s0.hallDepth&&s0.hallDepth<12) flags.push("The hall band is only "+fmt(s0.hallDepth,0)+" m deep, which takes "+Math.floor(s0.hallDepth/6)+" rack row at the GRD's 6 m pitch. Try the other zone band direction.");
     if(s0.apronShort) flags.push("Only "+fmt(s0.apronDepth,0)+" m of yard is available between the street and the building, short of a "+o.dockApron+" m apron, so the dock and ramp are shown inside the footprint as urban designs normally do.");
     flags.push("Stormwater retention and parking are not laid out in infill mode. Assume underground tanks and parking inside the building or off site.");
     { const left=siteArea-L[0].foot; flags.push("The substation ("+fmt(subArea,0)+" sqm) is not laid out in infill mode. "+(left>=subArea*1.3?"About "+fmt(left,0)+" sqm of the plot is left outside the building, which may hold it.":"Only about "+fmt(Math.max(0,left),0)+" sqm of the plot is left outside the building, so the substation would have to go off site or inside the building."));}
@@ -1284,7 +1289,7 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   const cname={internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Infill, street access",custom:"Your own roads"}[r.type];
   return {deg:r.deg,a:r.a,type:r.type,typeName:cname,placed:r.placed,roads:r.roads,gate:r.gate,it,fac,cov:r.cov,limit,flags,built:L,
     missed:(r.missedSpecs||[]).map(x=>({i:r.specs.indexOf(x),m:x.m,dens:x.dens,form:x.form,w:Math.round((x.Lm||0)+2*o.road),h:Math.round((x.H||0)+((x.Yd||0)>0?YARD_CLEAR:o.road)+YARD_CLEAR)})),
-    rect:r.rect,zones:r.zones,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,subPinned:!!r.subPinned,
+    rect:r.rect,zones:r.zones,zonesUp:r.zonesUp||null,dock:r.dock,infill:infill,storeys:storeysUsed,phases:r.phases||null,subPinned:!!r.subPinned,
     grid:fac<=100?"Likely sub-transmission connection. Confirm with the distribution utility.":"Likely transmission-level substation. Confirm with the grid operator.",
     rows:[["Site area",fmt(siteArea/1e4,2)+" ha","siteArea"],["Circulation",cname+", "+r.deg+"°","circRow"],
       ["Data buildings",L.length+" of "+r.specs.length,"buildings"],
@@ -2128,7 +2133,7 @@ function buildDetail(op,o,B){
       }}};
   const modular=(o.elec==="EMOD");
   if(op.infill){
-    for(const z of op.zones){
+    for(const z of (op.zonesUp&&op.zonesUp.length?op.zonesUp:op.zones)){
       if(z.kind==="hall") rows(z.r);
       if(z.kind==="ec") bays(z.r,Math.ceil(op.built[0].m/B.moduleMW)*B.gensPerModule,false);
     }
@@ -2207,12 +2212,14 @@ function renderLayout(){
     /* 3D: the ground-floor plan is one storey tall; the upper floors (data halls,
        electrical and mechanical rooms) sit over the whole footprint above it */
     const stk=(b0.storeys||1)>1;
-    for(const z of op.zones) box(z.r,z.kind,tag(z.name,z.area),z.area,stk?FLR:(z.kind==="apron"?HT.apron:iH));
-    if(stk) box(op.rect,"upper",null,undefined,iH,FLR);
+    const zU=stk&&op.zonesUp&&op.zonesUp.length?op.zonesUp:null;
+    for(const z of op.zones) box(z.r,z.kind,zU?null:tag(z.name,z.area),z.area,stk?FLR:(z.kind==="apron"?HT.apron:iH));
+    if(zU){for(const z of zU) box(z.r,z.kind,tag(z.name+(z.kind==="hall"||z.kind==="ec"||z.kind==="yard"?" (per floor)":""),z.area),z.area,iH,FLR);}
+    else if(stk) box(op.rect,"upper",null,undefined,iH,FLR);
     const rc=op.rect,el=document.createElement("div");el.className="lbl";
     /* roof chiller deck over the building, drawn from the end away from the
        dock, sized to the heat rejection the roof carries */
-    const hzs=op.zones.filter(z=>z.kind==="hall"||z.kind==="yard");
+    const hzs=(op.zonesUp||op.zones).filter(z=>z.kind==="hall"||z.kind==="yard");
     const hz=stk?{r:op.rect}:hzs.length?{r:[Math.min(...hzs.map(z=>z.r[0])),Math.min(...hzs.map(z=>z.r[1])),Math.max(...hzs.map(z=>z.r[2])),Math.max(...hzs.map(z=>z.r[3]))]}:null;
     if(b0.roofHR>0&&hz){const h=hz.r,W=h[2]-h[0],H=h[3]-h[1],f=Math.min(1,b0.roofHR/Math.max(1,W*H)),ins=Math.min(2.5,Math.min(W,H)*0.04);
       const dz=op.zones.find(z=>z.kind==="apron")||op.zones[0],dc=dz?[(dz.r[0]+dz.r[2])/2,(dz.r[1]+dz.r[3])/2]:[h[0],h[1]];
