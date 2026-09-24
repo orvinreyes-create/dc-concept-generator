@@ -26,7 +26,7 @@ h2{font:600 17px/1.2 "Barlow Condensed",sans-serif;margin:16px 0 6px}
 label{display:block;font-size:13px;color:var(--muted);margin:7px 0 3px}
 input,select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:6px 8px}
 textarea{min-height:80px;font-size:13px}
-.projsort{display:flex;align-items:center;gap:8px;margin:8px 0 4px}.projsort label{font-size:12px;color:var(--muted)}.projsort select{flex:1;padding:4px 6px}#projList li.current{background:#EEEEF7;box-shadow:inset 3px 0 0 #00006E;padding-left:8px;border-radius:3px}#projList li.current>span:first-child{font-weight:600;color:#00006E}.pnow{display:inline-block;font:600 10px/1 Barlow,sans-serif;letter-spacing:.05em;text-transform:uppercase;background:#00006E;color:#fff;padding:3px 5px;border-radius:3px;margin-right:6px;vertical-align:1px}.pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
+.projsort{display:flex;align-items:center;gap:8px;margin:8px 0 4px}.projsort label{font-size:12px;color:var(--muted)}.projsort select{flex:1;padding:4px 6px}#projList li.current{background:#EEEEF7;box-shadow:inset 3px 0 0 #00006E;padding-left:8px;border-radius:3px}#projList li.current>span:first-child{font-weight:600;color:#00006E}.pnow{display:inline-block;font:600 10px/1 Barlow,sans-serif;letter-spacing:.05em;text-transform:uppercase;background:#00006E;color:#fff;padding:3px 5px;border-radius:3px;margin-right:6px;vertical-align:1px}.folderbox{border:1px solid var(--line);background:#F5F6F8;border-radius:4px;padding:8px;margin:8px 0;font-size:12.5px}.folderbox.on{border-color:#00006E;background:#EEEEF7}.folderbox b{color:#00006E}.fbtns{display:flex;gap:6px;margin-top:6px}.fbtns .btn{flex:1;padding:5px 6px;font-size:12.5px}.pdup{display:block;font-size:11px;color:#B45309}.pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
 .seg button{flex:1;border:0;background:transparent;color:var(--ink);padding:7px 4px;font:inherit;font-size:14px;cursor:pointer}
@@ -160,11 +160,18 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <summary><span class="n">1</span>Project</summary>
     <label for="projName">Project name</label>
     <input id="projName" placeholder="e.g. Pasig lot A">
+    <div class="folderbox" id="folderBox">
+      <div id="folderState">Projects are saved in this browser only.</div>
+      <div class="fbtns"><button class="btn" id="btnFolder" type="button">Connect folder</button><button class="btn" id="btnRefresh" type="button" hidden>Refresh</button><button class="btn" id="btnDisconnect" type="button" hidden>Disconnect</button></div>
+    </div>
     <div class="btns">
       <button class="btn" id="saveLocal" type="button">Save on this device</button>
-      <button class="btn" id="importProj" type="button">Open project file</button>
+      <button class="btn" id="importProj" type="button">Open file</button>
     </div>
-    <button class="btn" id="exportProj" type="button" style="width:100%;margin-top:6px">Export project file</button>
+    <div class="btns" style="margin-top:6px">
+      <button class="btn" id="exportProj" type="button">Export project file</button>
+      <button class="btn" id="btnBackup" type="button">Back up all</button>
+    </div>
     <input type="file" id="projFile" accept=".json,application/json" hidden>
     <div class="projsort" id="projSortWrap"><label for="projSort">Sort</label><select id="projSort"><option value="name">Name (A–Z)</option><option value="created">Newest first</option><option value="updated">Recently saved</option><option value="mw">Capacity (largest first)</option></select></div>
     <ul class="projects" id="projList"></ul>
@@ -2919,7 +2926,8 @@ function restore(p){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,op
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
 const pMW=p=>p.mw!=null?p.mw:(+((p.values||{}).targetMW)||0);
 const pDate=d=>d?new Date(d).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}):"";
-function drawProjects(){if(!$("projSort"))return;const l=lsGet(LS_PROJ,[]);const k=$("projSort").value;
+let PROJ=lsGet(LS_PROJ,[]);
+function drawProjects(){if(!$("projSort"))return;const l=PROJ;const k=$("projSort").value;
   const idx=l.map((p,i)=>i).sort((a,b)=>{const A=l[a],B=l[b];
     if(k==="mw")return pMW(B)-pMW(A)||A.name.localeCompare(B.name);
     if(k==="created")return String(B.created||B.saved||"").localeCompare(String(A.created||A.saved||""));
@@ -2927,16 +2935,64 @@ function drawProjects(){if(!$("projSort"))return;const l=lsGet(LS_PROJ,[]);const
     return A.name.localeCompare(B.name,undefined,{numeric:true,sensitivity:"base"});});
   $("projSortWrap").hidden=l.length<2;
   const cur=$("projName").value.trim()||"Untitled site";
-  $("projList").innerHTML=l.length?idx.map(i=>{const p=l[i],on=p.name===cur;return `<li${on?' class="current" aria-current="true"':''}><span>${on?'<b class="pnow">Open now</b>':''}${esc(p.name)}<small class="pmeta">${fmt(pMW(p),0)} MW · ${pDate(p.created||p.saved)}</small></span><span>${on?'':`<button data-o="${i}">Open</button>`}<button data-d="${i}">Delete</button></span></li>`;}).join(""):'<li class="hint">No saved projects on this device.</li>';
+  $("projList").innerHTML=l.length?idx.map(i=>{const p=l[i],on=p.name===cur&&!p._dup;return `<li${on?' class="current" aria-current="true"':''}><span>${on?'<b class="pnow">Open now</b>':''}${esc(p.name)}<small class="pmeta">${fmt(pMW(p),0)} MW · ${pDate(p.created||p.saved)}</small>${p._dup?`<small class="pdup">Sync copy: ${esc(p._file)}</small>`:""}</span><span>${on?'':`<button data-o="${i}">Open</button>`}<button data-d="${i}">Delete</button></span></li>`;}).join(""):`<li class="hint">${FS.ok?"No projects in this folder yet.":"No saved projects on this device."}</li>`;
   $("projList").querySelectorAll("[data-o]").forEach(b=>b.onclick=()=>restore(l[+b.dataset.o]));
-  $("projList").querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{l.splice(+b.dataset.d,1);lsSet(LS_PROJ,l);drawProjects();});}
+  $("projList").querySelectorAll("[data-d]").forEach(b=>b.onclick=async()=>{const p=l[+b.dataset.d];
+    if(FS.ok){if(!confirm(`Delete “${p.name}” from the folder “${FS.name}”? Anyone sharing this folder will lose it too.`))return;
+      try{await FS.dir.removeEntry(p._file);}catch(e){status("Could not delete: "+e.message);return;}
+      if(!p._dup)lsSet(LS_PROJ,lsGet(LS_PROJ,[]).filter(q=>q.name!==p.name));}
+    else lsSet(LS_PROJ,lsGet(LS_PROJ,[]).filter(q=>q.name!==p.name));
+    loadProjects();});}
 $("projName").addEventListener("input",()=>drawProjects());
 $("projSort").onchange=()=>{try{localStorage.setItem("dccg.projSort",$("projSort").value)}catch(e){}drawProjects();};
 try{const v=localStorage.getItem("dccg.projSort");if(v)$("projSort").value=v;}catch(e){}
-$("saveLocal").onclick=()=>{const s=snapshot(),old=lsGet(LS_PROJ,[]),prev=old.find(p=>p.name===s.name);s.created=(prev&&(prev.created||prev.saved))||s.saved;const l=old.filter(p=>p.name!==s.name);l.push(s);status(lsSet(LS_PROJ,l)?"Saved on this device.":"This browser blocked storage.");drawProjects();};
+/* ===== Project folder: Chrome/Edge can read and write a real folder (e.g. a OneDrive-synced shared folder).
+   The browser copy is always kept too, as a fallback. ===== */
+const FS={dir:null,ok:false,name:""};const fsSupported="showDirectoryPicker" in window;
+const idb=(mode,fn)=>new Promise((res,rej)=>{const r=indexedDB.open("dccg-fs",1);r.onupgradeneeded=()=>r.result.createObjectStore("h");
+  r.onsuccess=()=>{const t=r.result.transaction("h",mode),q=fn(t.objectStore("h"));t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error);};r.onerror=()=>rej(r.error);});
+const pFile=n=>(n||"Untitled site").replace(/[\\/:*?"<>|]+/g,"-").trim()+".dccg.json";
+const pClean=p=>{const q={...p};delete q._file;delete q._dup;return q;};
+async function fsWrite(name,obj){const h=await FS.dir.getFileHandle(name,{create:true});const w=await h.createWritable();await w.write(JSON.stringify(obj,null,1));await w.close();}
+async function fsRead(){const out=[];for await(const [nm,h] of FS.dir.entries()){if(h.kind!=="file"||!/\.dccg\.json$/i.test(nm))continue;
+  try{const p=JSON.parse(await (await h.getFile()).text());if(p.app!=="dccg")continue;p._file=nm;p._dup=nm!==pFile(p.name);out.push(p);}catch(e){}}return out;}
+async function loadProjects(){if(FS.ok){try{PROJ=await fsRead();}catch(e){FS.ok=false;status("Lost access to the folder: "+e.message);PROJ=lsGet(LS_PROJ,[]);}}else PROJ=lsGet(LS_PROJ,[]);drawFolder();drawProjects();}
+function drawFolder(){const box=$("folderBox");box.classList.toggle("on",FS.ok);
+  if(!fsSupported){$("folderState").textContent="Projects are saved in this browser only. Folder sync needs Chrome or Edge on a computer.";$("btnFolder").hidden=true;return;}
+  $("folderState").innerHTML=FS.ok?`Folder <b>${esc(FS.name)}</b> · ${PROJ.length} project${PROJ.length===1?"":"s"}`:FS.dir?`Folder <b>${esc(FS.name)}</b> needs your permission again.`:"Projects are saved in this browser only.";
+  $("btnFolder").textContent=FS.ok?"Change folder":FS.dir?"Reconnect":"Connect folder";
+  $("btnRefresh").hidden=!FS.ok;$("btnDisconnect").hidden=!FS.dir;$("saveLocal").textContent=FS.ok?"Save to folder":"Save on this device";}
+$("btnFolder").onclick=async()=>{try{
+  if(FS.dir&&!FS.ok&&(await FS.dir.requestPermission({mode:"readwrite"}))==="granted"){FS.ok=true;await loadProjects();status(`Reconnected to “${FS.name}”.`);return;}
+  const d=await window.showDirectoryPicker({id:"vitro-testfit",mode:"readwrite"});FS.dir=d;FS.ok=true;FS.name=d.name;
+  try{await idb("readwrite",st=>st.put(d,"dir"));}catch(e){}
+  const have=new Set((await fsRead()).map(p=>p.name)),local=lsGet(LS_PROJ,[]).filter(p=>!have.has(p.name));
+  for(const p of local)await fsWrite(pFile(p.name),pClean(p));
+  await loadProjects();status(`Connected to “${d.name}”.`+(local.length?` Copied ${local.length} project${local.length>1?"s":""} from this browser into it.`:""));
+}catch(e){if(e.name!=="AbortError")status("Could not connect the folder: "+e.message);}};
+$("btnRefresh").onclick=()=>loadProjects().then(()=>FS.ok&&status("Folder refreshed."));
+$("btnDisconnect").onclick=async()=>{FS.dir=null;FS.ok=false;FS.name="";try{await idb("readwrite",st=>st.delete("dir"));}catch(e){}loadProjects();status("Disconnected. Projects are saved in this browser again; the folder's files are untouched.");};
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&FS.ok)loadProjects();});
+(async()=>{if(fsSupported){try{const d=await idb("readonly",st=>st.get("dir"));if(d){FS.dir=d;FS.name=d.name;FS.ok=(await d.queryPermission({mode:"readwrite"}))==="granted";}}catch(e){}}loadProjects();})();
+$("saveLocal").onclick=async()=>{const s=snapshot(),old=lsGet(LS_PROJ,[]),prev=PROJ.find(p=>p.name===s.name&&!p._dup)||old.find(p=>p.name===s.name);
+  s.created=(prev&&(prev.created||prev.saved))||s.saved;const okLS=lsSet(LS_PROJ,old.filter(p=>p.name!==s.name).concat([s]));
+  if(FS.ok){try{await fsWrite(pFile(s.name),s);status(`Saved to “${FS.name}”.`);}catch(e){status("Could not write to the folder ("+e.message+"). Saved in this browser instead.");}}
+  else status(okLS?"Saved on this device.":"This browser blocked storage.");
+  await loadProjects();};
+$("btnBackup").onclick=async()=>{const list=(FS.ok?PROJ.filter(p=>!p._dup):lsGet(LS_PROJ,[])).map(pClean);if(!list.length){status("No saved projects to back up.");return;}
+  const d=new Date(),nm=`TestFit-backup-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.json`;
+  const obj={app:"dccg-backup",v:1,created:d.toISOString(),count:list.length,projects:list};
+  if(FS.ok){try{await fsWrite(nm,obj);status(`Backed up ${list.length} projects to ${nm} in “${FS.name}”.`);return;}catch(e){}}
+  download(nm,JSON.stringify(obj,null,1),"application/json");status(`Backup of ${list.length} projects downloaded.`);};
 $("exportProj").onclick=()=>download((snapshot().name).replace(/[^\w\-]+/g,"-")+".dccg.json",JSON.stringify(snapshot(),null,1),"application/json");
 $("importProj").onclick=()=>$("projFile").click();
-$("projFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const p=JSON.parse(await f.text());if(p.app!=="dccg")throw new Error("Not a project file.");restore(p);}catch(err){status("Could not open project: "+err.message);}e.target.value="";};
+$("projFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const p=JSON.parse(await f.text());
+    if(p.app==="dccg-backup"&&Array.isArray(p.projects)){const n=p.projects.length;
+      if(!confirm(`Restore ${n} project${n===1?"":"s"} from this backup${FS.ok?` into “${FS.name}”`:""}? Saved projects with the same names will be replaced.`)){e.target.value="";return;}
+      const ls=lsGet(LS_PROJ,[]),names=new Set(p.projects.map(q=>q.name));lsSet(LS_PROJ,ls.filter(q=>!names.has(q.name)).concat(p.projects));
+      if(FS.ok)for(const q of p.projects)await fsWrite(pFile(q.name),pClean(q));
+      await loadProjects();status(`Restored ${n} project${n===1?"":"s"}.`);e.target.value="";return;}
+    if(p.app!=="dccg")throw new Error("Not a project or backup file.");restore(p);}catch(err){status("Could not open project: "+err.message);}e.target.value="";};
 let persistT=null;function persist(){clearTimeout(persistT);persistT=setTimeout(()=>lsSet("dccg.lastSession",snapshot()),400);}
 function status(t){$("status").textContent=t;if(t)setTimeout(()=>{if($("status").textContent===t)$("status").textContent="";},8000);}
 
