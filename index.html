@@ -41,6 +41,9 @@ body.locked .app{filter:blur(3px) grayscale(.4);pointer-events:none;user-select:
 #gate .gcard .btn{width:100%;background:#00006E;border-color:#00006E;color:#fff}#gate .gcard .btn:hover{background:#1a1a8a}
 .gcard .gerr{color:#B42318;font-size:12.5px;min-height:1em;margin:10px 0 6px}
 .gcard .gfoot{font-size:10.5px;letter-spacing:.06em;color:var(--muted);margin:8px 0 0}
+#ztip{position:absolute;z-index:6;pointer-events:none;max-width:280px;background:#fff;border:1px solid var(--line);border-left:3px solid #00006E;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,40,.16);padding:7px 9px;font-size:12.5px;line-height:1.35}
+#ztip b{display:block;color:#00006E;font-size:13px}#ztip span{display:block}#ztip small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+@keyframes zf{0%{box-shadow:0 0 0 3px rgba(0,0,110,.45)}100%{box-shadow:0 0 0 3px rgba(0,0,110,0)}}.zflash{animation:zf 1.6s ease-out;border-radius:4px}
 .pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
@@ -1812,14 +1815,56 @@ const map=new maplibregl.Map({container:"map",center:[121.0509,14.5507],zoom:16,
     layers:[{id:"osm",type:"raster",source:"osm"},{id:"sat",type:"raster",source:"sat",layout:{visibility:"none"}}]}});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"bottom-right");
 map.addControl(new maplibregl.ScaleControl({unit:"metric"}),"bottom-right");
-const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)"};
+const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"#BFC5C9",sub:"#B1A1D4",pond:"#7FC9E3",support:"#DFD7A8",road:"#9AA1A7",apron:"#C9CDD1",gate:"#D97742",landscape:"#BFDCA4",spare:"#CFE3B8",roofhr:"rgba(31,95,153,0.20)",guard:"#C9A27E",clearzone:"rgba(47,58,64,0.13)",setback:"rgba(0,0,110,0.06)",fenceband:"rgba(47,58,64,0.05)"};
 const EMPTY={type:"FeatureCollection",features:[]};
+/* ===== Zone hover: margins and clear zones explain themselves and link to the setting that makes them ===== */
+const ZINFO={
+  setback:{t:"Setback",v:()=>vv("setback")+" m from the boundary, set by zoning",sec:1,f:"setback",how:"Site \u2192 Zoning limits \u2192 Setback"},
+  clearzone:{t:"Security clear zone",v:()=>vv("clearZone")+" m inside the fence, kept clear for patrol",sec:1,f:"clearZone",how:"Site \u2192 Security \u2192 Clear zone inside fence"},
+  fenceband:{t:"Fence inset",v:()=>vv("fenceInset")+" m between the boundary and the fence",sec:1,f:"fenceInset",how:"Site \u2192 Security \u2192 Fence inset"},
+  road:{t:"Service road",v:()=>{const t=state.result&&state.result.options[state.opt]&&state.result.options[state.opt].type;return vv("roadW")+" m wide \u00b7 "+({internal:"Internal spine",perimeter:"Perimeter loop",external:"External drives",infill:"Street access",custom:"Your own roads"}[t]||optTxt("circulation"));},sec:3,f:"circulation",how:"Layout \u2192 Circulation (width: Design values \u2192 Service road)"},
+  gate:{t:"Gate drive",v:()=>"From the street to the site roads, "+vv("roadW")+" m wide",sec:3,f:"faceGate",how:"Click the street edge's length on the map to move it"},
+  "clear-bldg":{t:"Building clearance",v:()=>"Kept clear around the building for yards, fire access and the service road",sec:4,f:"yardClear",how:"Design values \u2192 Yard clearance (and Service road)"},
+  "clear-sub":{t:"Substation clearance",v:()=>vv("subMargin")+" m margin inside the substation fence",sec:4,f:"subMargin",how:"Design values \u2192 Substation \u2192 Margin"},
+  "clear-hr":{t:"Yard clearance",v:()=>"Clearance around the heat rejection yard ("+vv("yardClear")+" m setting)",sec:4,f:"yardClear",how:"Design values \u2192 Yard clearance"},
+  apron:{t:"Loading dock apron",v:()=>vv("dockApron")+" m deep, for trucks to turn and unload",sec:4,f:"dockApron",how:"Design values \u2192 Loading dock apron"},
+  pond:{t:"Retention pond",v:()=>vv("pondPct")+"% of the site, for stormwater",sec:4,f:"pondPct",how:"Design values \u2192 Site services \u2192 Retention"},
+  support:{t:"Parking and yards",v:()=>vv("supportSqm")+" sqm for parking, laydown and storage",sec:4,f:"supportSqm",how:"Design values \u2192 Site services \u2192 Parking and yards"},
+  yard:{t:"Ground heat rejection",v:()=>"Chillers or dry coolers placed at grade",sec:3,f:"hrLoc",how:"Layout \u2192 Heat rejection"},
+  guard:{t:"Guardhouse",v:()=>"Beside the gate drive, just inside the fence",sec:1,f:"fenceOn",how:"Site \u2192 Security"}};
+function vv(id){const e=$(id);return e?e.value:"";}
+const ztip=document.createElement("div");ztip.id="ztip";ztip.hidden=true;map.getContainer().appendChild(ztip);
+let zHover=null,zRaf=0,zTop=false;
+const zBusy=()=>state.drawing||state.dragging||state.editRoads||state.pinning||state.subPinning||document.body.classList.contains("locked");
+function zPick(pt){if(!map.getLayer("layout-fill"))return null;
+  const fs=map.queryRenderedFeatures(pt,{layers:["layout-fill"]});return fs.find(f=>f.properties.z&&ZINFO[f.properties.z])||null;}
+function zShow(f,pt){const I=ZINFO[f.properties.z];
+  ztip.innerHTML=`<b>${I.t}</b><span>${esc(I.v())}</span><small>${I.how}${I.f?" \u00b7 click to adjust":""}</small>`;
+  ztip.hidden=false;const W=map.getContainer().clientWidth,tw=ztip.offsetWidth;
+  ztip.style.left=Math.min(pt.x+14,W-tw-8)+"px";ztip.style.top=(pt.y+16)+"px";
+  if(map.getSource("zhover")){if(!zTop){try{map.moveLayer("zhover-fill");map.moveLayer("zhover-line");zTop=true;}catch(e){}}map.getSource("zhover").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:f.geometry}]});}
+  map.getCanvas().style.cursor="pointer";}
+function zHide(){if(!zHover)return;zHover=null;ztip.hidden=true;if(map.getSource("zhover"))map.getSource("zhover").setData(EMPTY);map.getCanvas().style.cursor="";}
+map.on("mousemove",e=>{if(zRaf)return;zRaf=requestAnimationFrame(()=>{zRaf=0;
+  if(zBusy()){zHide();return;}const f=zPick(e.point);if(!f){zHide();return;}zHover=f;zShow(f,e.point);});});
+map.on("mouseout",zHide);map.on("movestart",()=>{if(zHover)zHide();});
+map.on("click",e=>{if(zBusy())return;const f=zPick(e.point);if(!f)return;const I=ZINFO[f.properties.z];
+  if(!("ontouchstart" in window)||zHover===f||(zHover&&zHover.properties.z===f.properties.z)){
+    if(SECS[I.sec]&&!SECS[I.sec].open)SECS[I.sec].open=true;const el=$(I.f);
+    if(el){setTimeout(()=>{el.scrollIntoView({block:"center",behavior:"smooth"});el.focus({preventScroll:true});
+      const t=el.closest("div")||el;t.classList.remove("zflash");void t.offsetWidth;t.classList.add("zflash");},60);}
+    zHide();return;}
+  zHover=f;zShow(f,e.point);});
+map.on("load",()=>{
+  map.addSource("zhover",{type:"geojson",data:EMPTY});
+  map.addLayer({id:"zhover-fill",type:"fill",source:"zhover",paint:{"fill-color":"#00006E","fill-opacity":0.16}});
+  map.addLayer({id:"zhover-line",type:"line",source:"zhover",paint:{"line-color":"#00006E","line-width":2}});});
 map.on("load",()=>{
   map.addSource("layout",{type:"geojson",data:EMPTY});
   map.addSource("site",{type:"geojson",data:EMPTY});
   map.addLayer({id:"site-fill",type:"fill",source:"site",paint:{"fill-color":COLORS.landscape,"fill-opacity":0.9}});
   map.addLayer({id:"layout-fill",type:"fill",source:"layout",filter:["==",["geometry-type"],"Polygon"],paint:{"fill-color":["match",["get","kind"],...Object.entries(COLORS).flat(),"#ccc"],"fill-opacity":1}});
-  map.addLayer({id:"layout-line",type:"line",source:"layout",filter:["!",["in",["get","kind"],["literal",["roofhr","fence","clearzone","clear"]]]],paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
+  map.addLayer({id:"layout-line",type:"line",source:"layout",filter:["!",["in",["get","kind"],["literal",["roofhr","fence","clearzone","clear","setback","fenceband"]]]],paint:{"line-color":"#1D2B36","line-width":0.8,"line-opacity":0.6}});
   map.addLayer({id:"roof-line",type:"line",source:"layout",filter:["==",["get","kind"],"roofhr"],
     paint:{"line-color":"#1F5F99","line-width":1.6,"line-dasharray":[2.5,1.5]}});
   map.addSource("detail",{type:"geojson",data:EMPTY});
@@ -2119,10 +2164,10 @@ function renderLayout(){
   /* roads: strips plus a rounded knuckle at every end, so junctions read as
      continuous carriageway instead of overlapping bars */
   const strip=(a1,b1,w)=>{const dx=b1[0]-a1[0],dy=b1[1]-a1[1],l=Math.hypot(dx,dy)||1,px=-dy/l*w/2,py=dx/l*w/2;
-    quad([[a1[0]+px,a1[1]+py],[b1[0]+px,b1[1]+py],[b1[0]-px,b1[1]-py],[a1[0]-px,a1[1]-py]],"road",null);};
-  const knuckle=(p,w)=>{const n=14,pts=[];for(let i=0;i<n;i++){const t=i/n*Math.PI*2;pts.push([p[0]+Math.cos(t)*w/2,p[1]+Math.sin(t)*w/2]);}quad(pts,"road",null);};
+    quad([[a1[0]+px,a1[1]+py],[b1[0]+px,b1[1]+py],[b1[0]-px,b1[1]-py],[a1[0]-px,a1[1]-py]],"road",null);feats[feats.length-1].properties.z=ZT;};let ZT="road";
+  const knuckle=(p,w)=>{const n=14,pts=[];for(let i=0;i<n;i++){const t=i/n*Math.PI*2;pts.push([p[0]+Math.cos(t)*w/2,p[1]+Math.sin(t)*w/2]);}quad(pts,"road",null);feats[feats.length-1].properties.z="road";};
   for(const c of op.roads) strip(c.a,c.b,c.w);
-  if(op.gate) strip(op.gate.node,op.gate.edge,op.gate.w);
+  if(op.gate){ZT="gate";strip(op.gate.node,op.gate.edge,op.gate.w);ZT="road";}
   const ends=[];
   for(const c of op.roads){ends.push([c.a,c.w]);ends.push([c.b,c.w]);}
   if(op.gate) ends.push([op.gate.node,op.gate.w]);
@@ -2135,12 +2180,16 @@ function renderLayout(){
     let PR=state.ring.map(F.toM).map(p=>rot(p,-op.a));if(polyArea(PR)<0)PR=PR.reverse();
     const fl=(o.fenceInset||0)>0.05?insetPoly(PR,o.fenceInset):PR;
     if((o.clearZone||0)>0.05){const cz=insetPoly(PR,(o.fenceInset||0)+o.clearZone);
-      feats.unshift({type:"Feature",properties:{kind:"clearzone"},geometry:{type:"Polygon",coordinates:[fl.concat([fl[0]]).map(p=>toLL(p[0],p[1])),cz.slice().reverse().concat([cz[cz.length-1]]).map(p=>toLL(p[0],p[1]))]}});}
+      feats.unshift({type:"Feature",properties:{kind:"clearzone",z:"clearzone"},geometry:{type:"Polygon",coordinates:[fl.concat([fl[0]]).map(p=>toLL(p[0],p[1])),cz.slice().reverse().concat([cz[cz.length-1]]).map(p=>toLL(p[0],p[1]))]}});}
+    if((o.fenceInset||0)>0.05)feats.unshift({type:"Feature",properties:{kind:"fenceband",z:"fenceband"},geometry:{type:"Polygon",coordinates:[PR.concat([PR[0]]).map(p=>toLL(p[0],p[1])),fl.slice().reverse().concat([fl[fl.length-1]]).map(p=>toLL(p[0],p[1]))]}});
     feats.push({type:"Feature",properties:{kind:"fence"},geometry:{type:"LineString",coordinates:fl.concat([fl[0]]).map(p=>toLL(p[0],p[1]))}});
     if(op.gate&&!op.infill){const e=op.gate.edge,n=op.gate.node,L=Math.hypot(n[0]-e[0],n[1]-e[1])||1,u=[(n[0]-e[0])/L,(n[1]-e[1])/L],v=[-u[1],u[0]];
       const at=(du,dv)=>[e[0]+u[0]*du+v[0]*dv,e[1]+u[1]*du+v[1]*dv];
       const d0=(o.fenceInset||0)+1.5,sd=op.gate.w/2+2;
       quad([at(d0,sd),at(d0+8,sd),at(d0+8,sd+5),at(d0,sd+5)],"guard","Guardhouse",0,HT.guard);}}
+  if((o.setback||0)>0.05){let PR=state.ring.map(F.toM).map(p=>rot(p,-op.a));if(polyArea(PR)<0)PR=PR.reverse();
+    const sb=insetPoly(PR,o.setback);if(sb&&sb.length>2)feats.unshift({type:"Feature",properties:{kind:"setback",z:"setback"},geometry:{type:"Polygon",coordinates:[PR.concat([PR[0]]).map(p=>toLL(p[0],p[1])),sb.slice().reverse().concat([sb[sb.length-1]]).map(p=>toLL(p[0],p[1]))]}});}
+  const lastZ=z=>{feats[feats.length-1].properties.z=z;};
   if(op.infill){
     const b0=op.built[0];
     if(op.dock) quad(op.dock,"apron",null);
@@ -2166,12 +2215,12 @@ function renderLayout(){
     const r=pl.r,m=pl.meta;
     if(pl.kind==="sub"){/* the plot carries its fence margin: drawn as clearance around the substation itself */
       const mg=Math.max(0,(o.subMargin>=0?o.subMargin:8)/2),core=[r[0]+mg,r[1]+mg,r[2]-mg,r[3]-mg];
-      if(mg>0.05)box(r,"clear",null);box(core[2]>core[0]&&core[3]>core[1]?core:r,"sub",tag("Substation",m.area),m.area,HT.sub);continue;}
+      if(mg>0.05){box(r,"clear",null);lastZ("clear-sub");}box(core[2]>core[0]&&core[3]>core[1]?core:r,"sub",tag("Substation",m.area),m.area,HT.sub);continue;}
     if(pl.kind==="pond"){box(r,"pond",tag("Retention",m.area),m.area);continue;}
     if(pl.kind==="hryard"){const mg=Math.min(8,(o.yardClear>0?o.yardClear:15))/2,core=[r[0]+mg,r[1]+mg,r[2]-mg,r[3]-mg];
-      box(r,"clear",null);box(core[2]>core[0]&&core[3]>core[1]?core:r,"yard",tag("Heat rejection yard",m.area),m.area,HT.yard);continue;}
+      box(r,"clear",null);lastZ("clear-hr");box(core[2]>core[0]&&core[3]>core[1]?core:r,"yard",tag("Heat rejection yard",m.area),m.area,HT.yard);continue;}
     if(pl.kind==="support"){box(r,"support",tag("Parking and yards",m.area),m.area);continue;}
-    box(r,"clear",null);   /* yard and road clearance around the building, kept clear */
+    box(r,"clear",null);lastZ("clear-bldg");   /* yard and road clearance around the building, kept clear */
     const s=m.s,ix=r[0]+(m.swap?m.padTop:m.padX),iy=r[1]+(m.swap?m.padX:m.padTop);
     const span=m.swap?(r[3]-r[1])-m.padTop-m.padBot:(r[2]-r[0])-2*m.padX;
     const U=u=>m.mirror?s.Lm-u:u;   /* mirror puts the entrance side toward the gate */
@@ -2191,7 +2240,8 @@ function renderLayout(){
     zp(Z.admin,"admin",tag("Admin",s.adminFoot),s.adminFoot,Math.min(3,stB)*FLR);
   }
   /* clearances sit under everything else, roads included */
-  {const cl=feats.filter(f=>f.properties.kind==="clear"),rest=feats.filter(f=>f.properties.kind!=="clear");feats.length=0;feats.push(...cl,...rest);}
+  {const lo=k=>k==="setback"||k==="fenceband",sb=feats.filter(f=>lo(f.properties.kind)),cl=feats.filter(f=>f.properties.kind==="clear"),rest=feats.filter(f=>f.properties.kind!=="clear"&&!lo(f.properties.kind));feats.length=0;feats.push(...sb,...cl,...rest);}
+  for(const f of feats){const k=f.properties.kind;if(!f.properties.z&&/^(apron|pond|support|yard|guard)$/.test(k))f.properties.z=k;}
   const src=map.getSource("layout");
   if(src) src.setData({type:"FeatureCollection",features:feats});
   const dsrc=map.getSource("detail");
