@@ -2995,7 +2995,7 @@ function onePagerData(){
     sub:[(o.profile==="metro"?"Metro":"Campus"),btxt,dtxt,etxt].join(" · "),
     headline:[[fmt(op.it,0)+" MW","IT load (target "+fmt(targetOf(o),0)+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
     spec,phases:ph,dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]),
-    limit:op.limit,flags:op.flags.slice(0,2),bod:B.name,placeholder:!!B.placeholder,devs:B.placeholder?[]:devList().map(d=>d.txt),
+    limit:op.limit,flags:op.flags.filter(f=>!/deviation from the basis of design/i.test(f)).slice(0,2),bod:B.name,placeholder:!!B.placeholder,
     date:new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"}),
     credit:state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors"};}
 async function onePagerPDF(){
@@ -3018,7 +3018,7 @@ table.ph{margin:8px 0}table.ph th:not(:first-child){text-align:right}.note{font-
 @media screen{body{background:#888}.sheet{margin:20px auto;box-shadow:0 2px 12px rgba(0,0,0,.3)}}</style></head><body><div class="sheet">
 <div class="mast"><div><h1>${E(D.title)}</h1><p class="sub">${E(D.sub)}</p></div><div class="mark"><span class="conf">CONFIDENTIAL</span><span class="brand">VITRO Test Fit and Data Center Concept<br>Business Development &amp; Innovations</span></div></div><div class="rule"></div>
 <div class="grid"><div class="left"><img src="${plan}" alt="Site plan"><div class="duo"><img class="loc" src="${v3}" alt="3D massing"><img class="loc" src="${loc}" alt="Location and distances"></div></div>
-<div class="right">${D.placeholder?'<div class="warn">Placeholder design values: import the basis of design profile before sharing.</div>':''}${D.devs&&D.devs.length?`<div class="warn"><b>Departures from the basis of design:</b> ${D.devs.map(E).join("; ")}.</div>`:""}
+<div class="right">${D.placeholder?'<div class="warn">Placeholder design values: import the basis of design profile before sharing.</div>':''}
 <div class="kpis">${D.headline.map(k=>`<div class="kpi"><b>${E(k[0])}</b><span>${E(k[1])}</span></div>`).join("")}</div>
 <table><tr><th>Item</th><th style="text-align:right">Description</th></tr>${D.spec.map(r=>`<tr><td>${E(r[0])}</td><td>${E(r[1])}</td></tr>`).join("")}</table>
 <table class="ph"><tr><th>Phase</th><th>IT MW</th><th>Racks</th><th>kW / rack</th><th>Cooling</th><th>Cumulative MW</th></tr>${D.phases.map(r=>`<tr>${r.map((c,i)=>`<td${i?' style="text-align:right"':''}>${E(c)}</td>`).join("")}</tr>`).join("")}</table>
@@ -3060,7 +3060,6 @@ async function onePagerPPT(){
   sl.addTable(drows,{x:7.75,y:ty2,w:5.2,colW:[3.6,1.6],fontFace:FM,fontSize:8,color:ink,border:{type:"none"},rowH:.2,margin:.03});
   sl.addText([D.limit].concat(D.flags.map(f=>"• "+f)).join("\n"),{x:7.75,y:ty2+drows.length*.205+.05,w:5.2,h:.6,fontFace:F,fontSize:8,color:mute,valign:"top"});
   sl.addText("CONFIDENTIAL · "+D.bod+" · Concept test-fit only; not for design or permitting · "+D.credit+" · "+D.date,{x:.4,y:7.12,w:12.5,h:.25,fontFace:F,fontSize:8,color:mute});
-  if(D.devs&&D.devs.length) sl.addText("Departures from the basis of design: "+D.devs.join("; ")+".",{x:.4,y:6.8,w:12.5,h:.3,fontFace:F,fontSize:8,color:ink,bold:true,valign:"top"});
   if(D.placeholder) sl.addText("Placeholder design values: import the basis of design profile before sharing.",{x:.4,y:1.1,w:7,h:.1,fontFace:F,fontSize:8,color:ink,bold:true});
   await pp.writeFile({fileName:base()+"-one-pager.pptx"});status("Slide saved.");}
 $("btnOne").onclick=e=>{e.stopPropagation();const m=$("oneMenu");m.hidden=!m.hidden;$("btnOne").setAttribute("aria-expanded",String(!m.hidden));};
