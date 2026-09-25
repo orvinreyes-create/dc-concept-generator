@@ -61,6 +61,7 @@ aside input:disabled{background:#E6E8EC;color:#6B7580;cursor:not-allowed;border-
 .riskcard b.t{color:#00006E}.riskcard table{width:100%;border-collapse:collapse;margin:4px 0}.riskcard td{padding:3px 0;border-bottom:1px solid var(--line);vertical-align:top}.riskcard td:last-child{text-align:right;white-space:nowrap;padding-left:8px}
 .rk{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}.rk.r{background:#B42318}.rk.a{background:#D97706}.rk.g{background:#2F8F5B}.rk.n{background:#8A94A0}
 .riskcard small{color:var(--muted);display:block}
+body.solving .live::after{content:"Updating\u2026";position:absolute;right:10px;top:8px;font-size:11px;color:var(--muted)}
 .pmeta{font-weight:400;display:block;font-size:11px;color:var(--muted)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
@@ -394,6 +395,14 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
       <button class="btn" id="bodExportJson" type="button">Export as JSON</button>
     </div>
     <p class="hint">A profile is a spreadsheet of design values. Export the CSV, edit it in Excel, then import it back.</p>
+    <h3>Substation list (private)</h3>
+    <p class="hint" id="subListState">No private list loaded. Site risk uses OpenStreetMap substations only.</p>
+    <div class="btns">
+      <button class="btn" id="subLoad" type="button">Load list</button>
+      <button class="btn" id="subTemplate" type="button">CSV template</button>
+    </div>
+    <button class="btn" id="subClear" type="button" style="width:100%;margin-top:6px" hidden>Remove list from this browser</button>
+    <input type="file" id="subFile" accept=".csv,text/csv" hidden>
     <input type="file" id="bodFile" accept=".csv,.json,text/csv,application/json" hidden>
   </details>
   <div class="status" id="status" role="status"></div>
@@ -447,7 +456,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script>
+<script id="core">
 /* ===== Placeholder basis of design (generic, not from any company document) ===== */
 const PLACEHOLDER = {
   name:"Placeholder values", placeholder:true, version:1,
@@ -1377,6 +1386,8 @@ function parseCoords(txt){let ring;
   const f=ring[0],l=ring[ring.length-1]; if(f[0]===l[0]&&f[1]===l[1]) ring=ring.slice(0,-1);
   return ring.map(p=>[p[0],p[1]]);}
 
+</script>
+<script>
 /* ===== BOD profiles ===== */
 const $=id=>document.getElementById(id);
 
@@ -1900,7 +1911,19 @@ const COLORS={clear:"#CDD1D4",hall:"#8FB8DF",admin:"#E4AECD",ec:"#8FCB9A",yard:"
 const EMPTY={type:"FeatureCollection",features:[]};
 /* ===== Site risk screening: bundled snapshots of active faults (GEM) and grid (OpenStreetMap),
    loaded only when a site is screened, so nothing leaves the browser and normal use stays fast ===== */
-const RISK={data:null,loading:null,res:null,key:"",on:false};
+const RISK={data:null,loading:null,res:null,key:"",on:false,priv:null};
+/* private substation list: CSV with name, lat, lon, kv, capacity_mva, headroom_mva, notes */
+function subParse(text){const rows=parseCsvRows(text);if(rows.length<2)throw new Error("The file has no rows.");
+  const h=rows[0].map(x=>x.trim().toLowerCase().replace(/[^a-z_]/g,""));const ix=(...k)=>h.findIndex(x=>k.includes(x));
+  const iN=ix("name","substation"),iLa=ix("lat","latitude"),iLo=ix("lon","lng","long","longitude"),iK=ix("kv","voltage","voltage_kv","voltagekv"),iC=ix("capacity_mva","capacitymva","capacity","mva"),iH=ix("headroom_mva","headroommva","headroom","spare_mva","sparemva"),iT=ix("notes","note","remarks");
+  if(iLa<0||iLo<0)throw new Error("Needs lat and lon columns.");
+  const num=v=>{const n=parseFloat(String(v||"").replace(/,/g,""));return isFinite(n)?n:null;};
+  const out=rows.slice(1).map(r=>({n:(r[iN]||"").trim(),la:num(r[iLa]),lo:num(r[iLo]),kv:iK>=0?num(r[iK]):null,cap:iC>=0?num(r[iC]):null,head:iH>=0?num(r[iH]):null,t:iT>=0?(r[iT]||"").trim():""})).filter(x=>x.la!=null&&x.lo!=null&&Math.abs(x.la)<=90&&Math.abs(x.lo)<=180);
+  if(!out.length)throw new Error("No rows with valid coordinates.");return out;}
+function subState(){const L=RISK.priv;$("subListState").textContent=L&&L.length?`${L.length} substation${L.length>1?"s":""} loaded${RISK.privSrc?" from "+RISK.privSrc:""}. Site risk shows the nearest one with its headroom.`:"No private list loaded. Site risk uses OpenStreetMap substations only.";$("subClear").hidden=!(L&&L.length)||RISK.privSrc==="the project folder";}
+function subSet(list,src){RISK.priv=list;RISK.privSrc=src||"";RISK.res=null;RISK.key="";subState();riskUpdate();if(RISK.on&&map.getSource("rk-priv"))map.getSource("rk-priv").setData(privFC());}
+try{const v=JSON.parse(localStorage.getItem("dccg.subs")||"null");if(Array.isArray(v)&&v.length){RISK.priv=v;RISK.privSrc="this browser";}}catch(e){}
+function privFC(){return {type:"FeatureCollection",features:(RISK.priv||[]).map(p=>({type:"Feature",properties:{n:p.n||"Listed substation",kv:p.kv||0,head:p.head,cap:p.cap,t:p.t||""},geometry:{type:"Point",coordinates:[p.lo,p.la]}}))};}
 function riskLoad(){if(!RISK.loading){const j=u=>fetch(u).then(r=>r.ok?r.json():null).catch(()=>null);
   RISK.loading=Promise.all([j("data/faults-ph.json"),j("data/grid-ph.json")]).then(([f,g])=>{
     const bb=c=>{let a=[180,90,-180,-90];for(const p of c){a[0]=Math.min(a[0],p[0]);a[1]=Math.min(a[1],p[1]);a[2]=Math.max(a[2],p[0]);a[3]=Math.max(a[3],p[1]);}return a;};
@@ -1910,13 +1933,19 @@ function riskCompute(){const D=RISK.data,R0=state.ring;if(!D||!R0||R0.length<3)r
   const c=R0.reduce((t,p)=>[t[0]+p[0]/R0.length,t[1]+p[1]/R0.length],[0,0]),kx=Math.cos(c[1]*Math.PI/180)*111.32,ky=110.57;
   const P=p=>[(p[0]-c[0])*kx,(p[1]-c[1])*ky];
   const segD=(a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy;let t=L?-(a[0]*dx+a[1]*dy)/L:0;t=Math.max(0,Math.min(1,t));return Math.hypot(a[0]+t*dx,a[1]+t*dy);};
-  const lineD=cs=>{let m=1e9;for(let i=0;i+1<cs.length;i++){const d=segD(P(cs[i]),P(cs[i+1]));if(d<m)m=d;}return cs.length===1?Math.hypot(...P(cs[0])):m;};
+  /* distances are to the site boundary (0 when inside or crossing it) */
+  const RG=R0.map(P);const inside=q=>{let c2=false;for(let i=0,j=RG.length-1;i<RG.length;j=i++){const a=RG[i],b=RG[j];if(((a[1]>q[1])!==(b[1]>q[1]))&&(q[0]<(b[0]-a[0])*(q[1]-a[1])/(b[1]-a[1])+a[0]))c2=!c2;}return c2;};
+  const psd=(q,a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy;let t=L?((q[0]-a[0])*dx+(q[1]-a[1])*dy)/L:0;t=Math.max(0,Math.min(1,t));return Math.hypot(q[0]-a[0]-t*dx,q[1]-a[1]-t*dy);};
+  const ccw=(a,b,c2)=>(c2[1]-a[1])*(b[0]-a[0])>(b[1]-a[1])*(c2[0]-a[0]);const xs=(a,b,c2,d)=>ccw(a,c2,d)!==ccw(b,c2,d)&&ccw(a,b,c2)!==ccw(a,b,d);
+  const ptD=q=>{if(inside(q))return 0;let m=1e9;for(let i=0;i<RG.length;i++){const d=psd(q,RG[i],RG[(i+1)%RG.length]);if(d<m)m=d;}return m;};
+  const segEdge=(a,b)=>{let m=Math.min(ptD(a),ptD(b));if(!m)return 0;for(let i=0;i<RG.length;i++){const c2=RG[i],d=RG[(i+1)%RG.length];if(xs(a,b,c2,d))return 0;m=Math.min(m,psd(c2,a,b),psd(d,a,b));}return m;};
+  const lineD=cs=>{if(cs.length===1)return ptD(P(cs[0]));let m=1e9;for(let i=0;i+1<cs.length;i++){const a=P(cs[i]),b=P(cs[i+1]);if(segD(a,b)-60>m)continue;const d=segEdge(a,b);if(d<m)m=d;if(!m)break;}return m;};
   const near=(b,km)=>b[0]-km/kx<=c[0]&&b[2]+km/kx>=c[0]&&b[1]-km/ky<=c[1]&&b[3]+km/ky>=c[1];
   const out={};
   if(D.f){let best=null,n5=0;for(const f of D.f.faults){if(!near(f.b,150))continue;const d=lineD(f.c);if(d<5)n5++;if(!best||d<best.d)best={n:f.n,t:f.t,d};}out.fault=best;out.f5=n5;}
-  if(D.g){const S=D.g.subs.map(s=>({n:s[2],o:s[3],kv:s[4],d:Math.hypot(...P(s))})).sort((a,b)=>a.d-b.d);out.sub=S[0]||null;out.subHV=S.find(s=>s.kv>=115)||null;
+  if(D.g){const S=D.g.subs.map(s=>({n:s[2],o:s[3],kv:s[4],d:ptD(P(s))})).sort((a,b)=>a.d-b.d);out.sub=S[0]||null;out.subHV=S.find(s=>s.kv>=115)||null;
     let hv=null,mv=null;for(const l of D.g.lines){if(!near(l.b,80))continue;const d=lineD(l[3]);const o={kv:l[0],n:l[1],o:l[2],d};if(l[0]>=230){if(!hv||d<hv.d)hv=o;}else if(!mv||d<mv.d)mv=o;}out.hv=hv;out.mv=mv;}
-  const km=d=>d<1?fmt(d*1000,0)+" m":fmt(d,1)+" km";const lvl=(d,r,a)=>d==null?"n":d<r?"r":d<a?"a":"g";const rows=[];
+  const km=d=>d<0.005?"On site":d<1?fmt(d*1000,0)+" m":fmt(d,1)+" km";const lvl=(d,r,a)=>d==null?"n":d<r?"r":d<a?"a":"g";const rows=[];
   const snm=s=>(s.n||"Unnamed substation")+(s.kv?" \u00b7 "+fmt(s.kv,0)+" kV":"")+(s.o?" \u00b7 "+s.o:"");
   if(out.fault)rows.push(["Nearest mapped active fault: "+out.fault.n+(out.fault.t?" ("+out.fault.t.toLowerCase()+")":""),km(out.fault.d),lvl(out.fault.d,1,5)]);
   if(D.f)rows.push(["Mapped active faults within 5 km",String(out.f5),out.f5?"a":"g"]);
@@ -1924,28 +1953,77 @@ function riskCompute(){const D=RISK.data,R0=state.ring;if(!D||!R0||R0.length<3)r
   if(out.subHV&&out.subHV!==out.sub)rows.push(["Nearest 115 kV+ substation: "+snm(out.subHV),km(out.subHV.d),"n"]);
   if(out.hv)rows.push(["Nearest 230 kV+ line"+(out.hv.n?": "+out.hv.n:"")+" \u00b7 "+fmt(out.hv.kv,0)+" kV",km(out.hv.d),"n"]);
   if(out.mv)rows.push(["Nearest 69\u2013138 kV line"+(out.mv.n?": "+out.mv.n:"")+" \u00b7 "+fmt(out.mv.kv,0)+" kV",km(out.mv.d),"n"]);
+  if(RISK.priv&&RISK.priv.length){const L=RISK.priv.map(p=>Object.assign({d:ptD(P([p.lo,p.la]))},p)).sort((a,b)=>a.d-b.d),p=L[0];
+    const op=state.result&&state.result.options[state.opt],need=op?op.fac:0;
+    const hd=p.head!=null?(p.head>=need?"g":p.head>=need*0.5?"a":"r"):"n";
+    rows.unshift(["Nearest listed substation (VITRO list): "+(p.n||"Unnamed")+(p.kv?" \u00b7 "+fmt(p.kv,0)+" kV":"")+(p.head!=null?" \u00b7 headroom "+fmt(p.head,0)+(p.cap!=null?" of "+fmt(p.cap,0):"")+" MVA":"")+(p.t?" \u00b7 "+p.t:""),km(p.d),hd]);out.priv=p;}
   out.rows=rows;out.c=c;return out;}
 function riskHTML(){const r=RISK.res;if(!state.ring||state.ring.length<3)return "";
   if(!r)return `<div class="riskcard"><b class="t">Site risk (screening)</b><small><span class="spin"></span>Checking faults and grid\u2026</small></div>`;
-  const c=r.c;return `<div class="riskcard"><b class="t">Site risk (screening)</b><table>${r.rows.map(x=>`<tr><td><span class="rk ${x[2]}"></span>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>
-  <small>Straight-line from the site centre (${c[1].toFixed(5)}, ${c[0].toFixed(5)}). Faults: GEM Global Active Faults (CC BY-SA), regional scale; confirm the 5 m fault buffer, flood, landslide and liquefaction with PHIVOLCS <a href="https://hazardhunter.georisk.gov.ph/" target="_blank" rel="noopener">HazardHunterPH</a>. Grid: \u00a9 OpenStreetMap contributors (ODbL); capacity not shown, confirm with NGCP.</small></div>`;}
+  const c=r.c,allRows=r.rows.concat(hazRows());return `<div class="riskcard"><b class="t">Site risk (screening)</b><table>${allRows.map(x=>`<tr><td><span class="rk ${x[2]}"></span>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join("")}</table>
+  <small>Straight-line to the nearest point of the site boundary; 0 m means on or inside the site. Site centre ${c[1].toFixed(5)}, ${c[0].toFixed(5)}.${r.priv?" Headroom dot: green if it covers this layout\u2019s facility load, amber if half, red below.":""} Faults: GEM Global Active Faults (CC BY-SA), regional scale; confirm the 5 m fault buffer, flood, landslide and liquefaction with PHIVOLCS <a href="https://hazardhunter.georisk.gov.ph/" target="_blank" rel="noopener">HazardHunterPH</a>. Grid: \u00a9 OpenStreetMap contributors (ODbL); capacity not shown, confirm with NGCP. Hazards: UP NOAH (ODbL), share of site sampled at its worst level.</small></div>`;}
 let riskT=null;function riskUpdate(){clearTimeout(riskT);riskT=setTimeout(async()=>{if(!state.ring||state.ring.length<3)return;
   const key=state.ring.map(p=>p[0].toFixed(4)+","+p[1].toFixed(4)).join(";");
-  if(key!==RISK.key||!RISK.res){await riskLoad();RISK.res=riskCompute();RISK.key=key;}
-  const el=$("riskCard");if(el)el.innerHTML=riskHTML();},300);}
+  const opk=state.result&&state.result.options[state.opt]?Math.round(state.result.options[state.opt].fac):0;const key2=key+"|"+opk;
+  if(key2!==RISK.key||!RISK.res){await riskLoad();RISK.res=riskCompute();RISK.key=key2;}
+  const el=$("riskCard");if(el)el.innerHTML=riskHTML();
+  const hk=state.ring.map(p=>p[0].toFixed(4)+","+p[1].toFixed(4)).join(";");if(hk!==HAZ.key||!HAZ.res){HAZ.key=hk;hazUpdate();}},300);}
+/* ===== NOAH hazard lookup: flood (5/25/100-yr), landslide, storm surge (SSA4 worst case).
+   Read tile by tile from Project NOAH's open data (ODbL) only around the site; nothing is bundled. ===== */
+const HAZ={ready:null,res:null,key:"",base:"https://huggingface.co/datasets/bettergovph/project-noah-hazard-maps/resolve/main/PMTiles/layers/",
+  L:[["flood_100yr","Var","100-year flood"],["flood_25yr","Var","25-year flood"],["flood_5yr","Var","5-year flood"],["landslide","HAZ","Landslide"],["storm_surge_ssa4","HAZ","Storm surge (worst advisory)"]]};
+function hazInit(){if(HAZ.ready)return HAZ.ready;HAZ.ready=new Promise((res,rej)=>{if(window.pmtiles)return res();const sc=document.createElement("script");sc.src="https://cdn.jsdelivr.net/npm/pmtiles@3.2.1/dist/pmtiles.js";sc.onload=res;sc.onerror=rej;document.head.appendChild(sc);})
+  .then(()=>{const pr=new pmtiles.Protocol();maplibregl.addProtocol("pmtiles",pr.tile);
+    for(const [id,att] of HAZ.L){if(map.getSource("hz-"+id))continue;map.addSource("hz-"+id,{type:"vector",url:"pmtiles://"+HAZ.base+id+".pmtiles",attribution:"Hazard maps \u00a9 UP NOAH (ODbL)"});
+      const col=id==="landslide"?["match",["get",att],1,"#FDE68A",2,"#F59E0B",3,"#B45309",4,"#7C2D12","#F59E0B"]:id.startsWith("storm")?["match",["get",att],1,"#C4B5FD",2,"#8B5CF6",3,"#5B21B6","#8B5CF6"]:["match",["get",att],1,"#9ECAE1",2,"#4292C6",3,"#08519C","#4292C6"];
+      map.addLayer({id:"hz-"+id,type:"fill",source:"hz-"+id,"source-layer":id,paint:{"fill-color":col,"fill-opacity":0}},map.getLayer("layout-fill")?"layout-fill":undefined);}
+    hazShow();}).catch(e=>{HAZ.ready=null;throw e;});return HAZ.ready;}
+function hazShow(){for(const [id] of HAZ.L){if(!map.getLayer("hz-"+id))continue;const on=RISK.on&&(id==="flood_100yr"||id==="landslide"||id==="storm_surge_ssa4");map.setPaintProperty("hz-"+id,"fill-opacity",on?0.38:0);}}
+function hazLookup(){const R0=state.ring;if(!R0||R0.length<3)return null;const xs=R0.map(p=>p[0]),ys=R0.map(p=>p[1]);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),b=map.getBounds();
+  if(!(b.getWest()<=x0&&b.getEast()>=x1&&b.getSouth()<=y0&&b.getNorth()>=y1))return {offscreen:true};
+  const pip=(x,y,r)=>{let c=false;for(let i=0,j=r.length-1;i<r.length;j=i++){const a=r[i],q=r[j];if(((a[1]>y)!==(q[1]>y))&&(x<(q[0]-a[0])*(y-a[1])/(q[1]-a[1])+a[0]))c=!c;}return c;};
+  const n=18,pts=[];for(let i=0;i<n;i++)for(let j=0;j<n;j++){const x=x0+(i+.5)*(x1-x0)/n,y=y0+(j+.5)*(y1-y0)/n;if(pip(x,y,R0))pts.push([x,y]);}
+  if(!pts.length)return null;const out={};
+  for(const [id,att,label] of HAZ.L){const fs=map.querySourceFeatures("hz-"+id,{sourceLayer:id});const lv=pts.map(()=>0);
+    for(const f of fs){const v=+f.properties[att]||0;if(!v)continue;const g=f.geometry,polys=g.type==="Polygon"?[g.coordinates]:g.type==="MultiPolygon"?g.coordinates:[];
+      for(const P of polys){const outer=P[0];let bx0=180,bx1=-180,by0=90,by1=-90;for(const p of outer){if(p[0]<bx0)bx0=p[0];if(p[0]>bx1)bx1=p[0];if(p[1]<by0)by0=p[1];if(p[1]>by1)by1=p[1];}
+        if(bx1<x0||bx0>x1||by1<y0||by0>y1)continue;
+        pts.forEach((q,k)=>{if(lv[k]>=v||q[0]<bx0||q[0]>bx1||q[1]<by0||q[1]>by1)return;if(pip(q[0],q[1],outer)&&!P.slice(1).some(h=>pip(q[0],q[1],h)))lv[k]=v;});}}
+    const mx=Math.max(...lv),share=lv.filter(v=>v>=Math.max(1,mx)).length/pts.length;out[id]={label,mx,share,att};}
+  return out;}
+const HZN={Var:["None","Low","Medium","High"],HAZ:["None","Low","Moderate","High","Very high"]};
+function hazRows(){const h=HAZ.res;if(!h)return [];if(h.offscreen)return [["Flood, landslide and storm surge (NOAH)","Zoom to the site to read","n"]];
+  const rows=[];for(const [id] of HAZ.L){const r=h[id];if(!r)continue;const nm=(HZN[r.att]||HZN.Var)[r.mx]||("Level "+r.mx);
+    rows.push([r.label+": "+nm+(r.mx?" on "+Math.round(r.share*100)+"% of site":""),r.mx?nm:"None",r.mx>=3?"r":r.mx===2?"a":r.mx===1?"a":"g"]);}
+  return rows;}
+let hazT=null;function hazUpdate(){clearTimeout(hazT);hazT=setTimeout(async()=>{if(!state.ring||state.ring.length<3)return;
+  try{await hazInit();}catch(e){HAZ.res=null;return;}
+  const run=()=>{HAZ.res=hazLookup();const el=$("riskCard");if(el)el.innerHTML=riskHTML();};
+  if(map.areTilesLoaded())run();map.once("idle",run);},500);}
+map.on("moveend",()=>{if(HAZ.ready&&HAZ.res&&HAZ.res.offscreen)hazUpdate();});
+$("subLoad").onclick=()=>$("subFile").click();
+$("subFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const L=subParse(await f.text());try{localStorage.setItem("dccg.subs",JSON.stringify(L));}catch(x){}subSet(L,"this browser");status("Loaded "+L.length+" substations. They stay in this browser only.");}catch(err){status("Could not read the list: "+err.message);}e.target.value="";};
+$("subClear").onclick=()=>{try{localStorage.removeItem("dccg.subs");}catch(e){}subSet(null,"");status("Private substation list removed from this browser.");};
+$("subTemplate").onclick=()=>download("substations-template.csv","name,lat,lon,kv,capacity_mva,headroom_mva,notes\nExample Substation,14.2918,121.0695,230,300,85,Confirm with NGCP\n","text/csv");
+setTimeout(subState,0);
+[["btnDraw","D"],["btnRoads","R"],["btn3D","3"],["btnRisk","L"],["btnBase","S"],["btnPause","P"]].forEach(([id,k])=>{const b=$(id);if(b)b.title=((b.title?b.title+" ":"")+"(shortcut: "+k+")").trim();});
 $("btnRisk").onclick=async()=>{RISK.on=!RISK.on;$("btnRisk").setAttribute("aria-pressed",String(RISK.on));$("btnRisk").classList.toggle("on",RISK.on);
   if(RISK.on){const b=$("btnRisk"),t=b.textContent;b.innerHTML='<span class="spin"></span>Loading\u2026';const D=await riskLoad();b.textContent=t;
     if(!map.getSource("rk-faults")){
-      const F=D.f?{type:"FeatureCollection",features:D.f.faults.map(f=>({type:"Feature",properties:{n:f.n},geometry:{type:"LineString",coordinates:f.c}}))}:EMPTY;
-      const L=D.g?{type:"FeatureCollection",features:D.g.lines.map(l=>({type:"Feature",properties:{kv:l[0],n:l[1]},geometry:{type:"LineString",coordinates:l[3]}}))}:EMPTY;
-      const S=D.g?{type:"FeatureCollection",features:D.g.subs.map(s=>({type:"Feature",properties:{n:s[2]||"Substation",kv:s[4]},geometry:{type:"Point",coordinates:[s[0],s[1]]}}))}:EMPTY;
+      const F=D.f?{type:"FeatureCollection",features:D.f.faults.map(f=>({type:"Feature",properties:{n:f.n,t:f.t},geometry:{type:"LineString",coordinates:f.c}}))}:EMPTY;
+      const L=D.g?{type:"FeatureCollection",features:D.g.lines.map(l=>({type:"Feature",properties:{kv:l[0],n:l[1],o:l[2]},geometry:{type:"LineString",coordinates:l[3]}}))}:EMPTY;
+      const S=D.g?{type:"FeatureCollection",features:D.g.subs.map(s=>({type:"Feature",properties:{n:s[2]||"Substation",kv:s[4],o:s[3]},geometry:{type:"Point",coordinates:[s[0],s[1]]}}))}:EMPTY;
       map.addSource("rk-faults",{type:"geojson",data:F});map.addSource("rk-lines",{type:"geojson",data:L});map.addSource("rk-subs",{type:"geojson",data:S});
       map.addLayer({id:"rk-lines",type:"line",source:"rk-lines",paint:{"line-color":["step",["get","kv"],"#7C8B99",115,"#2563EB",230,"#7C3AED",500,"#DB2777"],"line-width":["interpolate",["linear"],["zoom"],8,1,14,2.5],"line-opacity":.85}});
       map.addLayer({id:"rk-faults",type:"line",source:"rk-faults",paint:{"line-color":"#B42318","line-width":["interpolate",["linear"],["zoom"],8,1.5,14,3.5],"line-dasharray":[3,1.5]}});
       map.addLayer({id:"rk-subs",type:"circle",source:"rk-subs",paint:{"circle-radius":["interpolate",["linear"],["zoom"],8,2.5,14,6],"circle-color":"#F59E0B","circle-stroke-color":"#fff","circle-stroke-width":1.2}});
+      map.addSource("rk-priv",{type:"geojson",data:privFC()});
+      map.addLayer({id:"rk-priv",type:"circle",source:"rk-priv",paint:{"circle-radius":["interpolate",["linear"],["zoom"],8,4,14,8],"circle-color":"#00006E","circle-stroke-color":"#fff","circle-stroke-width":1.6}});
       map.addLayer({id:"rk-labels",type:"symbol",source:"rk-subs",minzoom:12,layout:{"text-field":["get","n"],"text-size":11,"text-offset":[0,1.1],"text-anchor":"top"},paint:{"text-color":"#7A4A00","text-halo-color":"#fff","text-halo-width":1.4}});
       map.addLayer({id:"rk-flabels",type:"symbol",source:"rk-faults",minzoom:10,layout:{"symbol-placement":"line","text-field":["get","n"],"text-size":11},paint:{"text-color":"#B42318","text-halo-color":"#fff","text-halo-width":1.4}});}}
-  ["rk-lines","rk-faults","rk-subs","rk-labels","rk-flabels"].forEach(k=>{if(map.getLayer(k))map.setLayoutProperty(k,"visibility",RISK.on?"visible":"none");});};
+  ["rk-lines","rk-faults","rk-subs","rk-priv","rk-labels","rk-flabels"].forEach(k=>{if(map.getLayer(k))map.setLayoutProperty(k,"visibility",RISK.on?"visible":"none");});
+  hazInit().then(hazShow).catch(()=>{});};
 /* ===== Zone hover: margins and clear zones explain themselves and link to the setting that makes them ===== */
 const ZINFO={
   setback:{t:"Setback",v:()=>vv("setback")+" m from the boundary, set by zoning",sec:1,f:"setback",how:"Site \u2192 Zoning limits \u2192 Setback"},
@@ -1970,9 +2048,16 @@ const zBusy=()=>state.drawing||state.dragging||state.editRoads||state.pinning||s
 function zLines(f){let L=f.properties.lines;if(typeof L==="string"){try{L=JSON.parse(L);}catch(e){L=null;}}return Array.isArray(L)&&L.length?L:null;}
 function zPick(pt){if(!map.getLayer("layout-fill"))return null;
   const ly=state.d3&&map.getLayer("layout-3d")?["layout-3d","layout-fill"]:["layout-fill"];
-  const fs=map.queryRenderedFeatures(pt,{layers:ly});
+  if(RISK.on)["rk-priv","rk-subs","rk-faults","rk-lines"].forEach(k=>{if(map.getLayer(k))ly.unshift(k);});
+  const fs=map.queryRenderedFeatures([[pt.x-4,pt.y-4],[pt.x+4,pt.y+4]],{layers:ly});
+  const rk=fs.find(f=>/^rk-/.test(f.layer.id));if(rk)return rk;
   return fs.find(f=>(f.properties.z&&ZINFO[f.properties.z])||(state.d3&&f.layer.id==="layout-3d"&&(zLines(f)||ZINFO[f.properties.kind])))||null;}
-function zInfo(f){if(f.properties.z&&ZINFO[f.properties.z])return ZINFO[f.properties.z];const L=zLines(f);if(!L)return ZINFO[f.properties.kind]||null;
+function zInfo(f){const lid=f.layer&&f.layer.id,p=f.properties;
+  if(lid==="rk-faults")return {t:p.n,v:()=>"Mapped active fault"+(p.t?" \u00b7 "+String(p.t).toLowerCase():""),how:"GEM Global Active Faults (CC BY-SA). Confirm with PHIVOLCS.",f:null};
+  if(lid==="rk-lines")return {t:p.n||"Transmission line",v:()=>fmt(+p.kv,0)+" kV"+(p.o?" \u00b7 "+p.o:""),how:"\u00a9 OpenStreetMap contributors",f:null};
+  if(lid==="rk-subs")return {t:p.n,v:()=>(+p.kv?fmt(+p.kv,0)+" kV":"Voltage not recorded")+(p.o?" \u00b7 "+p.o:""),how:"\u00a9 OpenStreetMap contributors",f:null};
+  if(lid==="rk-priv")return {t:p.n,v:()=>[+p.kv?fmt(+p.kv,0)+" kV":"",p.head!=null&&p.head!=="null"?"headroom "+fmt(+p.head,0)+(p.cap!=null&&p.cap!=="null"?" of "+fmt(+p.cap,0):"")+" MVA":"",p.t].filter(Boolean).join(" \u00b7 "),how:"VITRO private substation list",f:null};
+if(f.properties.z&&ZINFO[f.properties.z])return ZINFO[f.properties.z];const L=zLines(f);if(!L)return ZINFO[f.properties.kind]||null;
   return {t:L[0],v:()=>L.slice(1).join(" \u00b7 "),how:"",f:null};}
 function zShow(f,pt){const I=zInfo(f);if(!I)return;const h=+f.properties.h||0,b=+f.properties.base||0,FL=activeBOD().floorM||6;
   const lvl=state.d3&&h>0?(b>0.5?"Floors "+(Math.round(b/FL)+1)+" to "+Math.max(Math.round(b/FL)+1,Math.round(h/FL)):(h<=FL*1.05?"Ground floor":"Full height"))+" \u00b7 "+fmt(h,1)+" m":"";
@@ -2167,11 +2252,19 @@ function schedule(coarse){
     const rs=map.getSource("roadprev"),R2=state.roadsLL;
     if(rs) rs.setData(R2&&R2.edges&&R2.edges.length?{type:"FeatureCollection",features:R2.edges.map(e=>({type:"Feature",properties:{},geometry:{type:"LineString",coordinates:[R2.nodes[e[0]],R2.nodes[e[1]]]}}))}:EMPTY);
     return;}
-  if(!coarse){clearTimeout(fullTimer);fullTimer=setTimeout(()=>{runSolve(false);persist();},120);return;}
+  if(!coarse){clearTimeout(fullTimer);fullTimer=setTimeout(()=>{runSolve(false,false,null,null,false,true);},120);return;}
   pendingCoarse=true; if(raf) return;
   raf=requestAnimationFrame(()=>{raf=null;runSolve(true);});
 }
-function runSolve(coarse,optimise,ov,budget,probe){
+/* ===== Background solver: the layout engine (the "core" script) also runs in a Web Worker,
+   so full re-solves after an edit never freeze the map or the inputs ===== */
+const SOLVER={w:null,ok:false,seq:0,cb:{}};
+try{const src=document.getElementById("core").textContent+`
+self.onmessage=e=>{const d=e.data;try{const res=solve(d.o,d.poly,d.B,false,d.hint);self.postMessage({id:d.id,res});}catch(err){self.postMessage({id:d.id,err:String(err&&err.message||err)});}};`;
+  SOLVER.w=new Worker(URL.createObjectURL(new Blob([src],{type:"text/javascript"})));SOLVER.ok=true;
+  SOLVER.w.onmessage=e=>{const f=SOLVER.cb[e.data.id];delete SOLVER.cb[e.data.id];if(f)f(e.data);};
+  SOLVER.w.onerror=()=>{SOLVER.ok=false;};}catch(e){SOLVER.ok=false;}
+function runSolve(coarse,optimise,ov,budget,probe,bg){
   if(state.ring.length<3||state.drawing) {if(!probe)renderEmpty();return;}
   /* sessions saved before a field existed leave it blank: fill from the profile */
   NUM.forEach(id=>{if($(id).value===""){const v=profileValue(id);if(v!=null)$(id).value=v;}});
@@ -2191,8 +2284,7 @@ function runSolve(coarse,optimise,ov,budget,probe){
   o.customRoads=(o.roadsLL&&o.roadsLL.edges.length)
     ? o.roadsLL.edges.map(e=>({a:F.toM(o.roadsLL.nodes[e[0]]),b:F.toM(o.roadsLL.nodes[e[1]]),w:o.roadsLL.w||o.road}))
     : null;
-  const res=solve(o,poly,B,coarse,state.lastDeg);
-  if(probe) return {res,o};
+  const fin=res=>{
   {const rs=map.getSource("roadprev");if(rs&&!coarse)rs.setData(EMPTY);}
   if(view) view.done=true;
   if(!coarse) state.lastOpt=!!optimise;
@@ -2208,6 +2300,15 @@ function runSolve(coarse,optimise,ov,budget,probe){
   if(!coarse){state.opt=0;} state.opt=Math.min(state.opt,res.options.length-1);
   state.lastDeg=res.options[state.opt].deg;
   renderLayout();renderLive(coarse);if(!coarse){renderSpec();riskUpdate();}
+  };
+  if(bg&&!coarse&&!probe&&!optimise&&SOLVER.ok){const id=++SOLVER.seq;document.body.classList.add("solving");
+    SOLVER.cb[id]=d=>{if(id!==SOLVER.seq)return;document.body.classList.remove("solving");
+      if(d.err||!d.res){fin(solve(o,poly,B,false,state.lastDeg));}else fin(d.res);persist();};
+    SOLVER.w.postMessage({id,o,poly,B,hint:state.lastDeg});return;}
+  if(!coarse){SOLVER.seq++;document.body.classList.remove("solving");}
+  const res=solve(o,poly,B,coarse,state.lastDeg);
+  if(probe) return {res,o};
+  fin(res);if(bg)persist();
 }
 /* with a building mix set, the target is the mix total, not the target field */
 function targetOf(o){return (o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;}
@@ -2519,6 +2620,10 @@ const PTZ=(()=>{
     if(was)map.once("moveend",()=>{if(state.d3&&!spin)act("spin");});};
   return {show:v=>{pad.hidden=!v;if(!v)stopSpin();},stop:stopSpin,refocus};})();
 if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost")){window.addEventListener("load",()=>{navigator.serviceWorker.register("sw.js").catch(()=>{});});}
+document.addEventListener("keydown",e=>{if(e.ctrlKey||e.metaKey||e.altKey||/INPUT|SELECT|TEXTAREA/.test(e.target.tagName||"")||document.body.classList.contains("locked"))return;
+  const k=e.key.toLowerCase(),click=id=>{const b=$(id);if(b&&!b.disabled&&!b.hidden){e.preventDefault();b.click();}};
+  if(k==="d")click(state.drawing?"btnFinish":"btnDraw");else if(k==="r")click("btnRoads");else if(k==="3")click("btn3D");
+  else if(k==="t"&&state.d3){e.preventDefault();setSkins(!SKIN.on);}else if(k==="l")click("btnRisk");else if(k==="s")click("btnBase");});
 document.addEventListener("keydown",e=>{if((e.key==="p"||e.key==="P")&&!e.ctrlKey&&!e.metaKey&&!/INPUT|SELECT|TEXTAREA/.test((e.target.tagName||""))){e.preventDefault();setPaused(!state.paused);}});
 $("btnOpt").onclick=()=>{if(state.paused)setPaused(false);state.pendingView=null;
   if(state.ring.length<3){status("Draw a site first.");return;}
@@ -3073,10 +3178,10 @@ function onePagerData(){
   return {title:$("projName").value.trim()||"Data centre concept",
     sub:[(o.profile==="metro"?"Metro":"Campus"),btxt,dtxt,etxt].join(" · "),
     headline:[[fmt(op.it,0)+" MW","IT load (target "+fmt(targetOf(o),0)+")"],[fmt(op.fac,1)+" MW","facility load"],[fmt(state.result.siteArea/1e4,2)+" ha","site area"]],
-    spec,phases:ph,dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]).concat(RISK.res?RISK.res.rows.map(r=>[r[0],r[1]]):[]),
+    spec,phases:ph,dist:(op.dist||[]).map(r=>[r[0].replace("Distance to ",""),r[1]]).concat(RISK.res?RISK.res.rows.concat(hazRows()).map(r=>[r[0],r[1]]):[]),
     limit:op.limit,flags:op.flags.filter(f=>!/deviation from the basis of design/i.test(f)).slice(0,2),bod:B.name,placeholder:!!B.placeholder,
     date:new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"}),
-    risk:RISK.res?RISK.res.rows:[],credit:(RISK.res?"Faults: GEM (CC BY-SA). Grid: \u00a9 OpenStreetMap (ODbL). ":"")+(state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors")};}
+    risk:RISK.res?RISK.res.rows:[],credit:(RISK.res?"Faults: GEM (CC BY-SA). Grid: \u00a9 OpenStreetMap (ODbL). "+(HAZ.res&&!HAZ.res.offscreen?"Hazards: UP NOAH (ODbL). ":""):"")+(state.base==="sat"?"Imagery © Esri, Maxar, Earthstar Geographics":"Map © OpenStreetMap contributors")};}
 async function onePagerPDF(){
   if(!state.result){status("Generate a layout first.");return;}
   const w=window.open("","_blank");if(!w){status("Allow pop-ups for this page to open the one-pager.");return;}
@@ -3221,7 +3326,8 @@ const pClean=p=>{const q={...p};delete q._file;delete q._dup;return q;};
 async function fsWrite(name,obj){const h=await FS.dir.getFileHandle(name,{create:true});const w=await h.createWritable();await w.write(JSON.stringify(obj,null,1));await w.close();}
 async function fsRead(){const out=[];for await(const [nm,h] of FS.dir.entries()){if(h.kind!=="file"||!/\.dccg\.json$/i.test(nm))continue;
   try{const p=JSON.parse(await (await h.getFile()).text());if(p.app!=="dccg")continue;p._file=nm;p._dup=nm!==pFile(p.name);out.push(p);}catch(e){}}return out;}
-async function loadProjects(){if(FS.ok){$("folderState").innerHTML='<span class="spin"></span>Reading folder\u2026';try{PROJ=await fsRead();}catch(e){FS.ok=false;status("Lost access to the folder: "+e.message);PROJ=lsGet(LS_PROJ,[]);}}else PROJ=lsGet(LS_PROJ,[]);drawFolder();drawProjects();}
+async function folderSubs(){if(!FS.ok)return;try{const h=await FS.dir.getFileHandle("substations.csv");const L=subParse(await (await h.getFile()).text());subSet(L,"the project folder");}catch(e){if(RISK.privSrc==="the project folder"){let v=null;try{v=JSON.parse(localStorage.getItem("dccg.subs")||"null");}catch(x){}subSet(v,v?"this browser":"");}}}
+async function loadProjects(){if(FS.ok){folderSubs();$("folderState").innerHTML='<span class="spin"></span>Reading folder\u2026';try{PROJ=await fsRead();}catch(e){FS.ok=false;status("Lost access to the folder: "+e.message);PROJ=lsGet(LS_PROJ,[]);}}else PROJ=lsGet(LS_PROJ,[]);drawFolder();drawProjects();}
 function drawFolder(){const box=$("folderBox");box.classList.toggle("on",FS.ok);
   if(!fsSupported){$("folderState").textContent="Projects are saved in this browser only. Folder sync needs Chrome or Edge on a computer.";$("btnFolder").hidden=true;return;}
   $("folderState").innerHTML=FS.ok?`Folder <b>${esc(FS.name)}</b> · ${PROJ.length} project${PROJ.length===1?"":"s"}`:FS.dir?`Folder <b>${esc(FS.name)}</b> needs your permission again.`:"Projects are saved in this browser only.";
@@ -3293,15 +3399,15 @@ $("btnCompare").onclick=()=>{const L=PROJ.filter(p=>!p._dup);$("cmpOut").innerHT
   $("cmpPick").onchange=()=>{const n=$("cmpPick").querySelectorAll("input:checked").length;$("cmpGo").disabled=n<2||n>4;};
   $("cmpGo").onclick=async()=>{const sel=[...$("cmpPick").querySelectorAll("input:checked")].map(x=>L[+x.value]);if(sel.length<2||sel.length>4)return;
     const btn=$("cmpGo");btn.disabled=true;btn.innerHTML='<span class="spin"></span>Solving '+sel.length+' projects\u2026';await new Promise(r=>setTimeout(r,30));
-    const home=snapshot(),res=[];HIST.mute++;
+    const home=snapshot(),res=[];HIST.mute++;await riskLoad();
     try{for(const p of sel){restore(p,{keepView:true});runSolve(false);const op=state.result&&state.result.options[state.opt];
-        res.push({p,op,geo:(state.layoutGeo||[]).slice(),ring:state.ring.slice(),devs:devList().length,tgt:targetOf(readOpts())});
+        const rk=riskCompute();res.push({p,op,geo:(state.layoutGeo||[]).slice(),ring:state.ring.slice(),devs:devList().length,tgt:targetOf(readOpts()),rk});
         await new Promise(r=>setTimeout(r,10));}}
-    finally{restore(home,{keepView:true});runSolve(false);setTimeout(()=>{HIST.mute=Math.max(0,HIST.mute-1);},900);}
+    finally{restore(home,{keepView:true});runSolve(false);RISK.key="";riskUpdate();setTimeout(()=>{HIST.mute=Math.max(0,HIST.mute-1);},900);}
     const bestMW=Math.max(...res.map(r=>r.op?r.op.it:0));
     $("cmpOut").innerHTML=`<div class="cmpgrid" style="grid-template-columns:repeat(${res.length},1fr)">`+res.map(r=>{const op=r.op;if(!op)return `<div class="cmpcol"><h3>${esc(r.p.name)}</h3><p>No layout.</p></div>`;
       const rows=[["IT load",fmt(op.it,op.it%1?1:0)+" / "+fmt(r.tgt,0)+" MW",op.it>=bestMW-0.05],["Facility load",cmpRow(op,"facLoad")],["Racks",cmpRow(op,"racks")],["Site area",cmpRow(op,"siteArea")],["Data buildings",cmpRow(op,"buildings")],
-        ["Storeys / height",cmpRow(op,"storeysRow")],["Gross floor area",cmpRow(op,"gfa")],["Footprint",cmpRow(op,"footprint")],["Coverage",cmpRow(op,"coverageRow")],["Substation",cmpRow(op,"subRow")],["GRD departures",r.devs?String(r.devs):"None"]];
+        ["Storeys / height",cmpRow(op,"storeysRow")],["Gross floor area",cmpRow(op,"gfa")],["Footprint",cmpRow(op,"footprint")],["Coverage",cmpRow(op,"coverageRow")],["Substation",cmpRow(op,"subRow")],["GRD departures",r.devs?String(r.devs):"None"],["Nearest active fault",r.rk&&r.rk.fault?r.rk.fault.n+" \u00b7 "+(r.rk.fault.d<1?fmt(r.rk.fault.d*1000,0)+" m":fmt(r.rk.fault.d,1)+" km"):"\u2014"],["Nearest substation",r.rk&&(r.rk.priv||r.rk.subHV||r.rk.sub)?(()=>{const q=r.rk.priv?{n:r.rk.priv.n,d:r.rk.priv.d,kv:r.rk.priv.kv}:(r.rk.subHV||r.rk.sub);return (q.n||"Unnamed")+(q.kv?" "+fmt(q.kv,0)+" kV":"")+" \u00b7 "+(q.d<1?fmt(q.d*1000,0)+" m":fmt(q.d,1)+" km");})():"\u2014"]];
       return `<div class="cmpcol"><h3>${esc(r.p.name)}</h3>${miniPlan(r.geo,r.ring)}<table>${rows.map(x=>`<tr><td>${x[0]}</td><td${x[2]?' class="best"':''}>${esc(String(x[1]))}</td></tr>`).join("")}</table>`
         +`${op.flags.length?`<div class="fl">${op.flags.length} flag${op.flags.length>1?"s":""}: ${esc(op.flags[0])}</div>`:""}</div>`;}).join("")+`</div>`;
     btn.disabled=false;btn.textContent="Compare";$("cmpPrint").hidden=false;};};
