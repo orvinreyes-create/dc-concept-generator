@@ -1973,7 +1973,8 @@ let riskT=null;function riskUpdate(){clearTimeout(riskT);riskT=setTimeout(async(
 const HAZ={ready:null,res:null,key:"",base:"https://huggingface.co/datasets/bettergovph/project-noah-hazard-maps/resolve/main/PMTiles/layers/",
   L:[["flood_100yr","Var","100-year flood"],["flood_25yr","Var","25-year flood"],["flood_5yr","Var","5-year flood"],["landslide","HAZ","Landslide"],["storm_surge_ssa4","HAZ","Storm surge (worst advisory)"]]};
 function hazInit(){if(HAZ.ready)return HAZ.ready;HAZ.ready=new Promise((res,rej)=>{if(window.pmtiles)return res();const sc=document.createElement("script");sc.src="https://cdn.jsdelivr.net/npm/pmtiles@3.2.1/dist/pmtiles.js";sc.onload=res;sc.onerror=rej;document.head.appendChild(sc);})
-  .then(()=>{const pr=new pmtiles.Protocol();maplibregl.addProtocol("pmtiles",pr.tile);
+  .then(()=>new Promise(res=>{const t0=Date.now();const w=()=>{if(map.isStyleLoaded()||Date.now()-t0>20000)res();else setTimeout(w,250);};w();}))
+  .then(()=>{if(!HAZ.proto){const pr=new pmtiles.Protocol();maplibregl.addProtocol("pmtiles",pr.tile);HAZ.proto=true;}
     for(const [id,att] of HAZ.L){if(map.getSource("hz-"+id))continue;map.addSource("hz-"+id,{type:"vector",url:"pmtiles://"+HAZ.base+id+".pmtiles",attribution:"Hazard maps \u00a9 UP NOAH (ODbL)"});
       const col=id==="landslide"?["match",["get",att],1,"#FDE68A",2,"#F59E0B",3,"#B45309",4,"#7C2D12","#F59E0B"]:id.startsWith("storm")?["match",["get",att],1,"#C4B5FD",2,"#8B5CF6",3,"#5B21B6","#8B5CF6"]:["match",["get",att],1,"#9ECAE1",2,"#4292C6",3,"#08519C","#4292C6"];
       map.addLayer({id:"hz-"+id,type:"fill",source:"hz-"+id,"source-layer":id,paint:{"fill-color":col,"fill-opacity":0}},map.getLayer("layout-fill")?"layout-fill":undefined);}
@@ -1993,14 +1994,15 @@ function hazLookup(){const R0=state.ring;if(!R0||R0.length<3)return null;const x
     const mx=Math.max(...lv),share=lv.filter(v=>v>=Math.max(1,mx)).length/pts.length;out[id]={label,mx,share,att};}
   return out;}
 const HZN={Var:["None","Low","Medium","High"],HAZ:["None","Low","Moderate","High","Very high"]};
-function hazRows(){const h=HAZ.res;if(!h)return [];if(h.offscreen)return [["Flood, landslide and storm surge (NOAH)","Zoom to the site to read","n"]];
+function hazRows(){const h=HAZ.res;if(!h)return HAZ.ready?[["Flood, landslide and storm surge (NOAH)","Reading\u2026","n"]]:[];if(h.offscreen)return [["Flood, landslide and storm surge (NOAH)","Zoom to the site to read","n"]];
   const rows=[];for(const [id] of HAZ.L){const r=h[id];if(!r)continue;const nm=(HZN[r.att]||HZN.Var)[r.mx]||("Level "+r.mx);
     rows.push([r.label+": "+nm+(r.mx?" on "+Math.round(r.share*100)+"% of site":""),r.mx?nm:"None",r.mx>=3?"r":r.mx===2?"a":r.mx===1?"a":"g"]);}
   return rows;}
-let hazT=null;function hazUpdate(){clearTimeout(hazT);hazT=setTimeout(async()=>{if(!state.ring||state.ring.length<3)return;
+let hazT=null;function hazUpdate(){clearTimeout(hazT);hazT=setTimeout(async()=>{if(!state.ring||state.ring.length<3)return;HAZ.res=null;
   try{await hazInit();}catch(e){HAZ.res=null;return;}
-  const run=()=>{HAZ.res=hazLookup();const el=$("riskCard");if(el)el.innerHTML=riskHTML();};
-  if(map.areTilesLoaded())run();map.once("idle",run);},500);}
+  /* wait until the hazard tiles around the site have arrived before reading them */
+  let done=false;const run=()=>{if(done)return;done=true;HAZ.res=hazLookup();const el=$("riskCard");if(el)el.innerHTML=riskHTML();};
+  setTimeout(()=>{map.once("idle",run);map.triggerRepaint();},150);setTimeout(run,12000);},500);}
 map.on("moveend",()=>{if(HAZ.ready&&HAZ.res&&HAZ.res.offscreen)hazUpdate();});
 $("subLoad").onclick=()=>$("subFile").click();
 $("subFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const L=subParse(await f.text());try{localStorage.setItem("dccg.subs",JSON.stringify(L));}catch(x){}subSet(L,"this browser");status("Loaded "+L.length+" substations. They stay in this browser only.");}catch(err){status("Could not read the list: "+err.message);}e.target.value="";};
