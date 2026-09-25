@@ -2,7 +2,7 @@
    - The app page: network first, so updates arrive as soon as you are online; the cached copy is used offline.
    - Libraries (MapLibre, three.js, fonts, PptxGenJS): cache first; they are versioned and do not change.
    - Map tiles: cached as you browse (up to ~1,500), so recently viewed areas still show on a weak connection. */
-const V = "vtf-v1";
+const V = "vtf-v2";
 const PAGE = "vtf-page-" + V, LIBS = "vtf-libs-" + V, TILES = "vtf-tiles-" + V;
 const TILE_MAX = 1500;
 
@@ -35,6 +35,15 @@ self.addEventListener("fetch", e => {
       if (r.ok) { const cp = r.clone(); caches.open(PAGE).then(c => c.put("./index.html", cp)); }
       return r;
     }).catch(() => caches.match("./index.html").then(r => r || caches.match("./"))));
+    return;
+  }
+
+  if (u.origin === location.origin && u.pathname.includes("/data/")) {
+    /* site-risk snapshots: serve the cached copy instantly, refresh it in the background */
+    e.respondWith(caches.open(LIBS).then(c => c.match(req).then(hit => {
+      const net = fetch(req).then(r => { if (r.ok) c.put(req, r.clone()); return r; }).catch(() => hit);
+      return hit || net;
+    })));
     return;
   }
 
