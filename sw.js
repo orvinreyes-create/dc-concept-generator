@@ -2,7 +2,7 @@
    - The app page: network first, so updates arrive as soon as you are online; the cached copy is used offline.
    - Libraries (MapLibre, three.js, fonts, PptxGenJS): cache first; they are versioned and do not change.
    - Map tiles: cached as you browse (up to ~1,500), so recently viewed areas still show on a weak connection. */
-const V = "vtf-v2";
+const V = "vtf-v3"; /* v3: libraries now load with integrity checks, so drop copies cached without CORS */
 const PAGE = "vtf-page-" + V, LIBS = "vtf-libs-" + V, TILES = "vtf-tiles-" + V;
 const TILE_MAX = 1500;
 
@@ -48,8 +48,11 @@ self.addEventListener("fetch", e => {
   }
 
   if (isLib(u)) {
-    e.respondWith(caches.open(LIBS).then(c => c.match(req).then(hit => hit || fetch(req).then(r => {
-      if (r.ok || r.type === "opaque") c.put(req, r.clone());
+    /* scripts and styles pinned with an integrity hash must come from a CORS response;
+       an opaque copy would fail the check, so only readable responses are cached for them */
+    const pinned = !!req.integrity || req.mode === "cors";
+    e.respondWith(caches.open(LIBS).then(c => c.match(req).then(hit => (hit && !(pinned && hit.type === "opaque") ? hit : null) || fetch(req).then(r => {
+      if (r.ok || (r.type === "opaque" && !pinned)) c.put(req, r.clone());
       return r;
     }))));
     return;

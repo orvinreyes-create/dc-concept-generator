@@ -10,7 +10,9 @@
 <meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#00006E">
 <title>VITRO TestFit</title>
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous">
+<!-- three.js is loaded on demand with import(); the import map pins its hash the same way -->
+<script type="importmap">{"imports":{},"integrity":{"https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.min.js":"sha384-8/hf5tabFfIo0BPku31TKUvGIKpWGYaMwNtlSNqNyZzXgZCMd4lnOGWbJElML9dv"}}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
 <style>
@@ -210,6 +212,9 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
   .mapwrap{height:68vh;order:-1}
   aside,.results{border:0;border-top:1px solid var(--line)}
 }
+.errbar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1000;display:flex;gap:8px;align-items:center;max-width:min(640px,calc(100vw - 32px));background:#fff;border:1px solid #E0B4B4;border-left:4px solid #B3261E;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,40,.18);padding:8px 10px;font-size:13px;color:#2F3A40}
+.errbar[hidden]{display:none}.errbar span{flex:1;min-width:0;overflow-wrap:anywhere}.errbar .btn{flex:none}
+ul.ifc{list-style:none;margin:6px 0;padding:0}ul.ifc li{margin:0 0 6px}ul.ifc label{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35;cursor:pointer}ul.ifc input{margin-top:2px;flex:none}ul.ifc b{color:#00006E;font-weight:600;margin-right:4px}ul.ifc small{display:block;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -380,6 +385,20 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
       <div><label for="pondPct">Retention (% site)</label><input id="pondPct" type="number" step="0.5"></div>
       <div><label for="supportSqm">Parking and yards (sqm)</label><input id="supportSqm" type="number" min="0" step="100"></div>
     </div>
+    <h3>Cost, timeline and water</h3>
+    <p class="hint">Screening estimates for the spec sheet. Blank fields use the profile. They do not change the layout.</p>
+    <div class="row">
+      <div><label for="landRate">Land (PHP/sqm)</label><input id="landRate" type="number" min="0" step="100" placeholder="Not set"></div>
+      <div><label for="capexMW">Build (PHP mn/MW IT)</label><input id="capexMW" type="number" min="0" step="1" placeholder="Not set"></div>
+    </div>
+    <div class="row">
+      <div><label for="tPredev">Pre-development (months)</label><input id="tPredev" type="number" min="0" step="1"></div>
+      <div><label for="tBuild">Build per phase (months)</label><input id="tBuild" type="number" min="1" step="1"></div>
+    </div>
+    <div class="row">
+      <div><label for="tGap">Months between phases</label><input id="tGap" type="number" min="0" step="1"></div>
+      <div><label for="wue">Water use, WUE (L/kWh)</label><input id="wue" type="number" min="0" step="0.05"></div>
+    </div>
   </details>
 
   <details class="sec">
@@ -406,6 +425,7 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
     <input type="file" id="bodFile" accept=".csv,.json,text/csv,application/json" hidden>
   </details>
   <div class="status" id="status" role="status"></div>
+  <div class="errbar" id="errbar" role="alert" hidden><span id="errMsg"></span><button type="button" id="errCopy" class="btn">Copy details</button><button type="button" id="errClose" class="btn" aria-label="Dismiss">&times;</button></div>
 </aside>
 
 <div class="mapwrap">
@@ -455,13 +475,15 @@ h2{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 <section class="results" id="results"><h2>Spec sheet</h2><p class="hint">Draw a site to see results.</p></section>
 </div>
 
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>
 <script id="core">
 /* ===== Placeholder basis of design (generic, not from any company document) ===== */
 const PLACEHOLDER = {
   name:"Placeholder values", placeholder:true, version:1,
   moduleMW:8, rowPitch:6.0, circFactor:1.22, floorM:6.0, roofPlantM:6, rackKgLimit:2000, dockApron:30, ecLevels:0, roofShare:0.9, yardClear:15, subSqm:0, subMargin:8, fenceInset:0, clearZone:3, roofTiers:1,
   gensPerModule:5, genKVA:3000, fuelHours:24, fuelLPerGen:15000,
+  /* generic planning assumptions, optional in a profile; build cost has no public default */
+  schedule:{predevMonths:12, buildMonths:24, phaseGapMonths:12},
   elec:{ EROOM:{crit:150, ecPerMW:200, admin:3000}, EMOD:{crit:70, ecPerMW:400, admin:3000} },
   density:{
     ent:  {kw:8,  sqmRack:2.6, liquid:0,  rackKg:1000, hr:120},
@@ -762,15 +784,22 @@ function solveInfill(o,poly,B,siteArea,angles){
   const full=solveInfillRaw(o,poly,B,siteArea,angles);
   const cap=Math.max(1,Math.round(o.storeys||0));
   if(!full||!(cap>0)||full.storeys<=cap) return full;
-  const target=full.mw;let lo=0,hi=target,best=null;
-  for(let i=0;i<14&&hi-lo>0.25;i++){const mid=(lo+hi)/2,r=solveInfillRaw(o,poly,B,siteArea,angles,mid);
-    if(r&&r.storeys<=cap){lo=mid;best=r;}else hi=mid;}
-  const step=v=>Math.floor(v*2)/2;
-  if(best&&step(lo)>0){const r2=solveInfillRaw(o,poly,B,siteArea,angles,step(lo));if(r2&&r2.storeys<=cap)best=r2;}
+  const target=full.mw;
+  const underCap=c=>{let lo=0,hi=target,best=null;
+    for(let i=0;i<14&&hi-lo>0.25;i++){const mid=(lo+hi)/2,r=solveInfillRaw(o,poly,B,siteArea,angles,mid);
+      if(r&&r.storeys<=c){lo=mid;best=r;}else hi=mid;}
+    const step=v=>Math.floor(v*2)/2;
+    if(best&&step(lo)>0){const r2=solveInfillRaw(o,poly,B,siteArea,angles,step(lo));if(r2&&r2.storeys<=c)best=r2;}
+    return best&&best.mw>=0.5?best:null;};
+  let best=underCap(cap),used=cap;
+  /* Nothing fits under the cap (the dock and admin fill the ground floor):
+     show the load at the fewest floors that hold any, flagged, instead of 0 MW. */
+  for(let c=cap+1;!best&&c<full.storeys;c++){best=underCap(c);if(best)used=c;}
+  if(!best){best=full;used=full.storeys;}
   const covNeed=Math.min(100,full.cov*full.storeys/cap);
-  const out=best||full;out.targetMW=target;out.capInfo={cap,need:full.storeys,fullMW:target,covNeed,fits:!!best};
-  if(!best){out.mw=0;}
-  out.score=1e9+out.mw*1e6-1e3;return out;}
+  const out=best;out.targetMW=target;out.capInfo={cap,need:full.storeys,fullMW:target,covNeed,fits:used===cap,relaxed:used>cap?used:0};
+  /* a result over the zoning cap ranks below any compliant layout with load */
+  out.score=(used>cap?5e8:1e9)+out.mw*1e6-1e3;return out;}
 function solveInfillRaw(o,poly,B,siteArea,angles,mwOverride){
   const dens=(o.mix&&o.mix.length===1)?o.mix[0].dens:o.density;
   const mw=mwOverride!=null?mwOverride:(o.mix&&o.mix.length)?o.mix.reduce((t,b)=>t+b.mw,0):o.targetMW;
@@ -930,7 +959,8 @@ function solve(o,poly,B,coarse,hintDeg){
   const mix=(o.mix&&o.mix.length)?o.mix:null;
   const specs=[];
   const ecPosAll=o.ecPos||"auto";
-  const mkSpec=(m,d,pos,st)=>{const oo=st>0?Object.assign({},o,{storeys:Math.round(st)}):o;
+  const mkSpec=(m,d,pos,st)=>{const out=mkSpec0(m,d,pos,st);out._args=[d,pos,st];return out;};
+  const mkSpec0=(m,d,pos,st)=>{const oo=st>0?Object.assign({},o,{storeys:Math.round(st)}):o;
     const side=buildingSpec(m,oo,B,d),end=buildingSpec(m,oo,B,d,"end"),ls=buildingSpec(m,oo,B,d,"lside");
     /* linear forms may also run longer and slimmer, to follow a narrow strip */
     const slim=f=>{const base=f==="end"?end:ls,out=[];for(const k of [.8,.65,.5]){const Dn=Math.round(base.D*k);if(Dn>=30&&Dn<base.D-3)out.push(buildingSpec(m,oo,B,d,f,Dn));}return out;};
@@ -942,6 +972,18 @@ function solve(o,poly,B,coarse,hintDeg){
   else { let rem=o.targetMW; const n=Math.ceil(o.targetMW/o.bldgMax);
     for(let i=0;i<n;i++){const m=Math.min(o.bldgMax,rem);specs.push(mkSpec(m,o.density));rem-=m;} }
   const targetMW=specs.reduce((t,s)=>t+s.m,0);
+  /* Smaller fall-back sizes for a building that does not fit, in whole design
+     modules, largest first, never under one module (at most six sizes). A
+     user's building mix is kept exactly as entered. */
+  const DOWN=new Map(),modMW=B.moduleMW>0?B.moduleMW:8;
+  const downsOf=i=>{if(mix) return [];let L=DOWN.get(i);if(L) return L;const s=specs[i];
+    const n=Math.ceil(s.m/modMW)-1,k=Math.max(1,Math.ceil(n/6)),sizes=[];
+    for(let j=n;j>=1;j-=k) sizes.push(j*modMW);
+    if(n>=1&&sizes[sizes.length-1]!==modMW) sizes.push(modMW);
+    /* the quick solve while dragging tries only half size and one module */
+    if(coarse) sizes.splice(0,sizes.length,...new Set(sizes.filter(m=>m===modMW||m===Math.max(modMW,Math.floor(s.m/2/modMW)*modMW))));
+    L=sizes.map(m=>{const d=mkSpec(m,...s._args);d.downFrom=s.m;(d.alts||[]).forEach(v=>v.downFrom=s.m);return d;});
+    DOWN.set(i,L);return L;};
   const facTarget=specs.reduce((t,s)=>t+s.m*s.pue,0);
   const subArea=(o.subSqm>0?o.subSqm:B.subSqm>0?B.subSqm:0)||(facTarget<=30?1500:facTarget<=100?3500:8000+Math.max(0,facTarget-300)*20);
   const subMaxAsp=Math.max(1,o.subAspect>0?o.subAspect:4),subMinSide=Math.max(5,o.subMinSide>0?o.subMinSide:30),
@@ -1164,10 +1206,13 @@ function solve(o,poly,B,coarse,hintDeg){
       for(const i of (order||specs.map((x,k)=>k))){const s=specs[i]; if(fixed.has(i)) continue;
         /* try the standard block, then the linear variant with the energy
            centre at the far end, which is narrower and may fit where the
-           standard one cannot */
+           standard one cannot; then smaller buildings, so a tight site still
+           shows the capacity it can take */
         let ok=false;
-        for(const v of (s.alts||[s])){const pd=padsOf(v);
-          if(tryPlace(v.Lm+2*pd.padX,v.H+pd.padTop+pd.padBot,"bldg",Object.assign({i,s:v},pd),true,loose?null:o.road+4,mode===undefined?spreadMode:mode)){mw+=v.m;built.push(v);ok=true;break;}}
+        for(const c of [s].concat(downsOf(i))){
+          for(const v of (c.alts||[c])){const pd=padsOf(v);
+            if(tryPlace(v.Lm+2*pd.padX,v.H+pd.padTop+pd.padBot,"bldg",Object.assign({i,s:v},pd),true,loose?null:o.road+4,mode===undefined?spreadMode:mode)){mw+=v.m;built.push(v);ok=true;break;}}
+          if(ok) break;}
         if(!ok) missed.push(s);}
       return {mw,built,missed,pinsPlaced};};
     /* One pass = substation, buildings, parking, retention in a given order
@@ -1183,7 +1228,7 @@ function solve(o,poly,B,coarse,hintDeg){
         for(let j=0;j<k&&ok;j++) ok=placeFlex(tot/k,"hryard",null,mg,k>1?10:12,AS);
         if(ok) return true;placed.splice(mark);}
       return false;};
-    const scoreOf=q=>(q.subOK?1e9:0)+q.pb.mw*1e6+(q.hrOK===false?-5e5:0)+(q.supOK?2e5:0)+(q.pondOK?1e5:0);
+    const scoreOf=q=>(q.subOK&&q.pb.mw>0?1e9:0)+q.pb.mw*1e6+(q.hrOK===false?-5e5:0)+(q.supOK?2e5:0)+(q.pondOK?1e5:0);
     const runPass=(mode,order,loose,subFirst)=>{
       placed.splice(pinFloor);
       let subOK=subFirst?placeSub():false;
@@ -1222,8 +1267,9 @@ function solve(o,poly,B,coarse,hintDeg){
 
   /* A layout is scored so that a buildable plan always outranks a bigger one
      that has nowhere to put its substation; then load, parking, retention,
-     and least road. */
-  const rank=q=>(q.subOK?1e9:0)+q.mw*1e6+(q.supOK?2e5:0)+(q.pondOK?1e5:0)-q.ra*0.4;
+     and least road. A layout with no data building at all never wins on its
+     substation alone. */
+  const rank=q=>(q.subOK&&q.mw>0?1e9:0)+q.mw*1e6+(q.supOK?2e5:0)+(q.pondOK?1e5:0)-q.ra*0.4;
   const finish=(deg,a,type,P,bb,base,out)=>{
     const gate=gateFor(P,base,o.frontPoint?rot(o.frontPoint,-a):null);
     const cov=out.built.reduce((t,s)=>t+s.foot+s.adminFoot+s.ecFoot,0)/siteArea*100;
@@ -1286,9 +1332,13 @@ function solve(o,poly,B,coarse,hintDeg){
       if(o.optimise?Date.now()>o.optimiseUntil:cand.indexOf(r)>=2) break;
       const q=finish(r.deg,r.a,r.type,c.P,c.bb,c.base,runPlacement(c.P,c.bb,c.base,true,r.a,true));
       if(q.score>r.score) res[res.indexOf(r)]=q;}}
+  /* Infill is tried when asked for, when campus modules fall short of the
+     target, and, even under "Campus modules", when no campus block fits at
+     all, so a first sketch always shows the capacity the plot can hold. */
+  const campusMW=Math.max(0,...res.map(r=>r.mw));
   const wantInfill=o.massing==="infill"||o.circulation==="infill"||
-    (o.massing!=="modular"&&(!res.length||Math.max(0,...res.map(r=>r.mw))<targetMW*0.999));
-  if(wantInfill){const inf=solveInfill(o,poly,B,siteArea,[...angs]);if(inf)res.push(inf);}
+    (o.massing!=="modular"&&(!res.length||campusMW<targetMW*0.999))||(o.massing==="modular"&&campusMW<=0);
+  if(wantInfill){const inf=solveInfill(o,poly,B,siteArea,[...angs]);if(inf){inf.campusMW=campusMW;inf.campusTried=res.length>0;res.push(inf);}}
   if(o.massing==="infill"||o.circulation==="infill"){const only=res.filter(r=>r.type==="infill");if(only.length)res.length=0,res.push(only[0]);}
   res.sort((p,q)=>q.score-p.score);
   /* a saved project reopens on the orientation the user had chosen */
@@ -1335,12 +1385,19 @@ function summarise(r,o,B,siteArea,subArea,pondArea,supportArea){
   if(!infill&&L.some(s=>s.form==="end")) flags.push(L.filter(s=>s.form==="end").length+" building"+(L.filter(s=>s.form==="end").length>1?"s use":" uses")+" the linear arrangement, with the energy centre at the far end of the data hall instead of along its side. It fits a narrower plot but lengthens cable runs from the energy centre; confirm with the electrical engineer.");
   if(o.pins&&o.pins.length&&(r.pinsPlaced||0)<Math.min(o.pins.length,r.specs.length))
     flags.push((Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0))+" pinned building"+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"s do":" does")+" not fit where pinned, so the solver placed "+(Math.min(o.pins.length,r.specs.length)-(r.pinsPlaced||0)>1?"them":"it")+" freely. Move the pin or reduce the building size.");
+  {const dn=L.filter(s=>s.downFrom);if(dn.length) flags.push(dn.length+" building"+(dn.length>1?"s were":" was")+" reduced to fit the site ("+dn.map(s=>fmt(s.downFrom,0)+" \u2192 "+fmt(s.m,0)+" MW").join(", ")+"). A larger plot, a smaller yard clearance or infill massing may take more.");}
+  if(infill&&o.massing!=="infill"&&o.circulation!=="infill"&&r.campusTried)
+    flags.unshift(r.campusMW>0?"Infill recommended: campus modules with their own yards fit only "+fmt(r.campusMW,0)+" MW here, against "+fmt(it,1)+" MW as one infill building.":"Infill recommended: the plot is too small for a campus module with its yards, road and substation, so it is shown as one infill building.");
   let limit;
-  if(infill&&r.capInfo){const c=r.capInfo;
+  if(infill&&r.capInfo&&r.capInfo.relaxed){const c=r.capInfo;
+    limit="Nothing fits within the "+c.cap+"-floor cap: the loading dock and admin take the ground floor. At "+c.relaxed+" floors the infill building holds "+fmt(r.mw,1)+" MW of "+fmt(c.fullMW,0)+" MW.";
+    flags.push("Storeys cap exceeded: "+limit+" Check the zoning height and floor limits, or reduce the admin area.");}
+  else if(infill&&r.capInfo){const c=r.capInfo;
     limit="The "+c.cap+"-floor cap limits the infill building to "+fmt(r.mw,1)+" MW of "+fmt(c.fullMW,0)+" MW. The full load needs "+c.need+" floors (plant floors included) at this coverage, or about "+fmt(c.covNeed,0)+"% coverage at "+c.cap+" floors.";
     flags.push("Storeys cap: "+limit+" Raise Storeys, the coverage limit or chiller tiers, or reduce the load.");}
   else if(infill) limit="Target of "+r.targetMW+" MW IT fits as an infill building of "+L[0].storeys+" floors on "+fmt(L[0].foot,0)+" sqm.";
   else if(it>=r.targetMW) limit="Target of "+r.targetMW+" MW IT fits.";
+  else if(!(r.missedSpecs&&r.missedSpecs.length)) limit="Site caps this option at "+fmt(it,0)+" MW of "+r.targetMW+" MW, with buildings reduced to fit.";
   else{const n=(r.missedSpecs&&r.missedSpecs[0])||r.specs[L.length];
     limit=L.length===0?"No campus-style block fits. The smallest needs about "+Math.round(n.Lm+2*o.road)+" \u00D7 "+Math.round(n.H+(n.Yd>0?YARD_CLEAR:o.road)+YARD_CLEAR)+" m including yard clearances."
       :"Site caps this option at "+it+" MW of "+r.targetMW+" MW. "+((r.missedSpecs&&r.missedSpecs.length>1)?r.missedSpecs.length+" buildings ("+fmt(r.missedSpecs.reduce((t,x)=>t+x.m,0),0)+" MW) do not fit.":"A "+n.m+" MW building does not fit.");
@@ -1388,6 +1445,19 @@ function parseCoords(txt){let ring;
 
 </script>
 <script>
+/* ===== Errors: say so instead of failing silently. Work in progress is kept
+   (the last session is saved as you go), so the message offers a retry or reload. ===== */
+{const ERR={last:0,detail:""};
+  const show=(msg,detail)=>{const now=Date.now();if(now-ERR.last<4000)return;ERR.last=now;ERR.detail=detail||msg;
+    const bar=document.getElementById("errbar");if(!bar)return;
+    document.getElementById("errMsg").textContent="Something went wrong: "+String(msg).slice(0,200)+". Your work is kept. Try again, or reload the page.";bar.hidden=false;};
+  const ignore=m=>/ResizeObserver loop|Script error\.?$/i.test(String(m||""));
+  window.addEventListener("error",e=>{if(!e.message||ignore(e.message))return;show(e.message,(e.error&&e.error.stack)||e.message+" at "+e.filename+":"+e.lineno);});
+  window.addEventListener("unhandledrejection",e=>{const r=e.reason,m=(r&&r.message)||String(r);if(ignore(m))return;show(m,(r&&r.stack)||m);});
+  window.addEventListener("DOMContentLoaded",()=>{
+    document.getElementById("errClose").onclick=()=>{document.getElementById("errbar").hidden=true;};
+    document.getElementById("errCopy").onclick=()=>{const t="VITRO TestFit error\n"+new Date().toISOString()+"\n"+navigator.userAgent+"\n\n"+ERR.detail;
+      (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{document.getElementById("errCopy").textContent="Copied";},()=>{prompt("Copy these details:",t);});};});}
 /* ===== BOD profiles ===== */
 const $=id=>document.getElementById(id);
 
@@ -1457,13 +1527,21 @@ gensRow:"Standby generators including the one serving house loads such as lighti
 fuelRow:"Total diesel stored on site to run the generators for the hours set in the profile. It drives tank sizing and refuelling access.",
 subRow:"Land set aside for the substation that connects the site to the grid. It grows with facility load.",
 pondRow:"Land set aside for stormwater retention.",
-supportRow:"Land for car parking, loading, waste and other support yards."
+supportRow:"Land for car parking, loading, waste and other support yards.",
+landRate:"Land price for this plot, in pesos per square metre, from a broker quote, an asking price or a recent comparable sale. The spec sheet multiplies it by the whole site area. BIR zonal values are a floor, usually well below market.",
+capexMW:"Construction cost per MW of IT load (civil, structural and architectural plus mechanical, electrical and plumbing), in PHP million. Blank uses cost.csaPerMW + cost.mepPerMW from the private profile. Excludes land, grid connection beyond the site substation, fit-out and IT equipment.",
+tPredev:"Months from land control to start of construction: design, permits (ECC, building permit, zoning), grid application. Grid connection is often the longest lead item; check it with the utility or NGCP.",
+tBuild:"Months to design-build one building (phase) from start on site to ready for service.",
+tGap:"Months between the start of one phase and the start of the next. 0 builds everything at once.",
+wue:"Water usage effectiveness: litres of water used on site per kWh of IT energy (The Green Grid). Close to 0 to 0.2 for air-cooled chillers in a closed loop, which is what this tool lays out; about 1.8 for evaporative cooling towers (industry average)."
 };
 const SRC={kw:"GRD",sqmRack:"GRD",pue:"GRD",liquid:"GRD",rackKg:"GRD",hrPerMW:"GRD",storeys:"GRD",bldgMax:"GRD",dockApron:"GRD",roofTiers:"GRD",yardClear:"GRD",
  setback:"NBCP",maxH:"NBCP",maxCov:"NBCP",padInSetback:"NBCP",oneSide:"Site",
+ landRate:"Site",tPredev:"Site",tBuild:"Site",tGap:"Site",wue:"Site",capexMW:"VITRO",
  targetMW:"Site",pondPct:"Site",roadW:"Site",supportSqm:"Site",subSqm:"Site",subMargin:"Site",subAspect:"Site",subMinSide:"Site",fenceInset:"Site",clearZone:"Site"};
 const SRC_TXT={GRD:"Source: the loaded basis-of-design profile (NTT GRD).",NBCP:"Source: National Building Code of the Philippines (PD 1096) and the local zoning ordinance. Check the site\u2019s actual limits.",
- Site:"Source: project or site assumption, neither GRD nor code."};
+ Site:"Source: project or site assumption, neither GRD nor code.",
+ VITRO:"Source: VITRO's own cost basis in the private profile, never published with the app."};
 function tipText(k){let t=TIP[k]||"";if(!t)return t;
   if(SRC[k]) t+="\n\n"+SRC_TXT[SRC[k]];
   if(NUM.includes(k)){let v=null;try{v=profileValue(k);}catch(e){}
@@ -1489,7 +1567,7 @@ function addTips(){
   Object.keys(TIP).forEach(k=>{
     const host=document.querySelector('label[for="'+k+'"]')||document.getElementById("lbl-"+k);
     if(!host||host.querySelector(".info"))return;
-    if(SRC[k]&&!host.querySelector(".src")){const g=document.createElement("span");g.className="src src-"+SRC[k].toLowerCase();g.textContent=SRC[k]==="Site"?"SITE":SRC[k];
+    if(SRC[k]&&!host.querySelector(".src")){const g=document.createElement("span");g.className="src src-"+SRC[k].toLowerCase();g.textContent=SRC[k]==="Site"?"SITE":SRC[k];if(SRC[k]==="VITRO")g.className="src src-grd";
       g.title=SRC_TXT[SRC[k]];host.appendChild(g);}
     const b=document.createElement("button");b.type="button";b.className="info";b.dataset.tip=k;b.textContent="i";
     b.setAttribute("aria-label","What is "+host.textContent.trim()+"?");
@@ -1498,6 +1576,12 @@ function addTips(){
 
 /* ===== Profile as a spreadsheet ===== */
 const CSV_ROWS=[
+ ["cost.csaPerMW","Optional. Civil, structural and architectural cost, PHP million per MW IT"],
+ ["cost.mepPerMW","Optional. Mechanical, electrical and plumbing (incl. fire and ELV) cost, PHP million per MW IT"],
+ ["cost.landPerSqm","Optional. Default land price, PHP per sqm, when a site has none"],
+ ["schedule.predevMonths","Optional. Months of design, permits and grid application before construction"],
+ ["schedule.buildMonths","Optional. Months to build one phase"],
+ ["schedule.phaseGapMonths","Optional. Months between phase starts"],
  ["name","Profile name shown in the app"],
  ["accessKey","VITRO access key. Keep this file private."],
  ["moduleMW","MW of IT load in one repeatable data hall module"],
@@ -1599,10 +1683,14 @@ function activeBOD(){const id=localStorage.getItem(LS_ACTIVE);return profiles().
    Only a SHA-256 hash of the key is published here; the key itself lives in the private profile file. ===== */
 const KEY_HASH="e23f0f8c0ef516f77ea49d66f4812b1cefd82f4c5bd4b22cbfafa2d2859c7478";
 async function sha256(t){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(t)));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");}
+/* Ask the browser not to clear this site's storage under disk pressure (or,
+   in Safari, after a week without a visit), which would drop the profile and
+   projects kept on this device. Best effort: browsers may decline silently. */
+function keepStorage(){try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persisted().then(p=>p||navigator.storage.persist()).catch(()=>{});}catch(e){}}
 async function keyOK(p){try{return !!(p&&p.accessKey&&(await sha256(p.accessKey))===KEY_HASH);}catch(e){return false;}}
-function missingLeaves(p,ref=PLACEHOLDER,pre=""){const out=[];for(const [k,v] of Object.entries(ref)){if(k==="name"||k==="placeholder"||k==="version"||k==="rowPitch")continue;
+function missingLeaves(p,ref=PLACEHOLDER,pre=""){const out=[];for(const [k,v] of Object.entries(ref)){if(k==="name"||k==="placeholder"||k==="version"||k==="rowPitch"||k==="schedule"||k==="cost")continue;
   const q=p==null?undefined:p[k],path=pre+k;if(v&&typeof v==="object")out.push(...missingLeaves(q,v,path+"."));else if(typeof v==="number"&&!(typeof q==="number"&&isFinite(q)))out.push(path);}return out;}
-async function checkGate(){const ok=await keyOK(activeBOD());document.body.classList.toggle("locked",!ok);$("gate").hidden=ok;
+async function checkGate(){const ok=await keyOK(activeBOD());if(ok)keepStorage();document.body.classList.toggle("locked",!ok);$("gate").hidden=ok;
   if(!ok){const valid=[];for(const p of profiles())if(await keyOK(p))valid.push(p);
     if(valid.length){localStorage.setItem(LS_ACTIVE,valid[valid.length-1].id);drawBOD();applyDefaults();refreshResets();return checkGate();}}
   return ok;}
@@ -1616,6 +1704,9 @@ function validateBOD(p){
 function drawBOD(){
   const list=profiles(), act=activeBOD();
   try{$("adminSqm").placeholder="Basis of design: "+fmt(act.elec[state.elec].admin,0);}catch(e){}
+  try{const C=act.cost||{},S=Object.assign({},PLACEHOLDER.schedule,act.schedule||{}),r=(+C.csaPerMW||0)+(+C.mepPerMW||0);
+    $("capexMW").placeholder=r>0?"Profile: "+fmt(r,0):"Not in profile";$("landRate").placeholder=+C.landPerSqm>0?"Profile: "+fmt(+C.landPerSqm,0):"Not set";
+    $("tPredev").placeholder=S.predevMonths;$("tBuild").placeholder=S.buildMonths;$("tGap").placeholder=S.phaseGapMonths;$("wue").placeholder="0.2";}catch(e){}
   $("bodSelect").innerHTML=list.map(p=>`<option value="${p.id}" ${p.id===act.id?"selected":""}>${esc(p.name)}</option>`).join("");
   const pill=$("bodPill");
   if(act.placeholder){pill.className="pill placeholder";pill.textContent="Using placeholder values. Import your profile before screening real sites.";}
@@ -1632,7 +1723,7 @@ $("bodFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;
     if(!p.name||p.name===PLACEHOLDER.name) p.name=f.name.replace(/\.(csv|json)$/i,"");
     const list=profiles().filter(x=>x.name!==p.name);list.push(p);
     if(!lsSet(LS_BOD,list)) throw new Error("This browser blocked storage. Private browsing may be on.");
-    localStorage.setItem(LS_ACTIVE,p.id);drawBOD();applyDefaults();refreshResets();await checkGate();$("gateErr").textContent="";status("Imported profile "+p.name+".");}
+    localStorage.setItem(LS_ACTIVE,p.id);drawBOD();applyDefaults();refreshResets();await checkGate();$("gateErr").textContent="";status("Imported profile "+p.name+".");keepStorage();}
   catch(err){status("Import failed: "+err.message);$("gateErr").textContent=err.message;} e.target.value="";};
 {const g=$("gateLogo"),b=document.querySelector(".brand img");if(g&&b)g.src=b.src;}
 $("gateLoad").onclick=()=>$("bodFile").click();
@@ -1972,7 +2063,7 @@ let riskT=null;function riskUpdate(){clearTimeout(riskT);riskT=setTimeout(async(
    Read tile by tile from Project NOAH's open data (ODbL) only around the site; nothing is bundled. ===== */
 const HAZ={ready:null,res:null,key:"",base:"https://huggingface.co/datasets/bettergovph/project-noah-hazard-maps/resolve/main/PMTiles/layers/",
   L:[["flood_100yr","Var","100-year flood"],["flood_25yr","Var","25-year flood"],["flood_5yr","Var","5-year flood"],["landslide","HAZ","Landslide"],["storm_surge_ssa4","HAZ","Storm surge (worst advisory)"]]};
-function hazInit(){if(HAZ.ready)return HAZ.ready;HAZ.ready=new Promise((res,rej)=>{if(window.pmtiles)return res();const sc=document.createElement("script");sc.src="https://cdn.jsdelivr.net/npm/pmtiles@3.2.1/dist/pmtiles.js";sc.onload=res;sc.onerror=rej;document.head.appendChild(sc);})
+function hazInit(){if(HAZ.ready)return HAZ.ready;HAZ.ready=new Promise((res,rej)=>{if(window.pmtiles)return res();const sc=document.createElement("script");sc.src="https://cdn.jsdelivr.net/npm/pmtiles@3.2.1/dist/pmtiles.js";sc.integrity="sha384-QfbOCebHNw8pQiPAOd2IFee2v2A5VYZxBk0+JGZ5H+3mfzVIp6zsQNkTsfGJot93";sc.crossOrigin="anonymous";sc.onload=res;sc.onerror=rej;document.head.appendChild(sc);})
   .then(()=>new Promise(res=>{const t0=Date.now();const w=()=>{if(map.isStyleLoaded()||Date.now()-t0>20000)res();else setTimeout(w,250);};w();}))
   .then(()=>{if(!HAZ.proto){const pr=new pmtiles.Protocol();maplibregl.addProtocol("pmtiles",pr.tile);HAZ.proto=true;}
     for(const [id,att] of HAZ.L){if(map.getSource("hz-"+id))continue;map.addSource("hz-"+id,{type:"vector",url:"pmtiles://"+HAZ.base+id+".pmtiles",attribution:"Hazard maps \u00a9 UP NOAH (ODbL)"});
@@ -2526,6 +2617,68 @@ function renderLayout(){
 function renderLive(coarse){const op=state.result.options[state.opt],o=state.o;
   $("live").innerHTML=`<div class="nums"><div><b>${fmt(op.it,Math.abs(op.it-Math.round(op.it))>0.05?1:0)} / ${fmt(targetOf(o),0)}</b><small>MW IT</small></div><div><b>${fmt(op.fac,1)}</b><small>MW facility</small></div><div><b>${((op.rows||[]).find(r=>r[2]==="racks")||[])[1]||"—"}</b><small>racks</small></div><div><b>${fmt(state.result.siteArea/1e4,2)}</b><small>ha site</small></div></div>
   <div class="lim">${coarse?"Updating… ":""}${esc(op.limit)}${op.flags.length?` <span style="color:var(--bad)">${op.flags.length} flag${op.flags.length>1?"s":""}</span>`:""}</div>`;}
+/* ===== Cost, timeline and water: screening estimates shown on the spec sheet.
+   Build cost comes from the private profile (cost.csaPerMW + cost.mepPerMW) or
+   the per-site field; the public app carries no cost figures. ===== */
+const ECON_IDS=["landRate","capexMW","tPredev","tBuild","tGap","wue"];
+function econ(op,o,B){
+  const num=id=>{const v=parseFloat($(id).value);return isFinite(v)&&v>=0?v:null;};
+  const C=B.cost||{},S=Object.assign({},PLACEHOLDER.schedule,B.schedule||{});
+  const csa=+C.csaPerMW>0?+C.csaPerMW:0,mep=+C.mepPerMW>0?+C.mepPerMW:0,prof=csa+mep>0?csa+mep:null;
+  const rate=num("capexMW")??prof, land=num("landRate")??(+C.landPerSqm>0?+C.landPerSqm:null);
+  const tP=num("tPredev")??S.predevMonths,tB=Math.max(1,num("tBuild")??S.buildMonths),tG=num("tGap")??S.phaseGapMonths;
+  const wue=num("wue")??0.2, site=state.result?state.result.siteArea:0, it=op.it;
+  const PH=(op.phases&&op.phases.length?op.phases:op.built.map((s,i)=>({s,name:"B"+(i+1)})));
+  const at=m=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()+Math.round(m));return d.toLocaleDateString("en-PH",{month:"short",year:"numeric"});};
+  const phases=PH.map((p,i)=>{const start=tP+i*tG,ready=start+tB;return {name:p.name||"B"+(i+1),mw:p.s.m,cost:rate!=null?p.s.m*rate:null,ready,readyAt:at(ready)};});
+  const build=rate!=null?it*rate:null, landC=land!=null?site*land/1e6:null;
+  const split=rate!=null&&prof&&csa>0&&mep>0?{csa:it*rate*csa/prof,mep:it*rate*mep/prof}:null;
+  const pm=v=>"PHP "+fmt(v,v>=100?0:1)+" mn";
+  const m3day=it*24*wue, gwh=op.fac*8.76;
+  const rows=[];
+  rows.push(["Build cost"+(rate!=null?" at PHP "+fmt(rate,0)+" mn/MW IT":""),build!=null?pm(build):"Set a build rate (profile or Design values)","capexRow"]);
+  if(split){rows.push(["  of which civil, structural, architectural",pm(split.csa),"csaRow"],["  of which MEP, fire and ELV",pm(split.mep),"mepRow"]);}
+  rows.push(["Land"+(land!=null?" at PHP "+fmt(land,0)+"/sqm":""),landC!=null?pm(landC)+" ("+fmt(site,0)+" sqm)":"Set a land rate for this site","landRow"]);
+  if(build!=null||landC!=null) rows.push(["Total, build and land",pm((build||0)+(landC||0))+(build==null||landC==null?" (partial)":""),"capexTotal"]);
+  if(build!=null&&it>0&&landC!=null) rows.push(["All-in per MW IT",pm(((build||0)+(landC||0))/it),"capexPerMW"]);
+  if(phases.length) rows.push(["First capacity ready",phases[0].name+", about month "+phases[0].ready+" ("+phases[0].readyAt+")","readyFirst"],
+    ["Full build-out",phases[phases.length-1].name+", about month "+phases[phases.length-1].ready+" ("+phases[phases.length-1].readyAt+")","readyLast"]);
+  rows.push(["Energy at full load","about "+fmt(gwh,0)+" GWh a year","energyRow"],
+    ["Heat rejected at full load","about "+fmt(op.fac,1)+" MW","heatRow"],
+    ["Cooling water at WUE "+fmt(wue,2),"about "+fmt(m3day,0)+" m\u00b3/day ("+fmt(m3day*365/1000,0)+" thousand m\u00b3 a year) at full IT load","waterRow"]);
+  return {rate,land,build,landC,phases,rows,tP,tB,tG};}
+function econHTML(op,o,B){if(!op.built.length)return "";const E=econ(op,o,B);
+  return `<h2>Cost, timeline and water (screening)</h2>
+  <table>${E.rows.map(r=>`<tr><td>${esc(r[0])}${TIP[r[2]]?`<button type="button" class="info" data-tip="${r[2]}" aria-label="What does this mean?">i</button>`:""}</td><td>${esc(r[1])}</td></tr>`).join("")}</table>
+  ${E.phases.length>1?`<table><tr><th>Phase</th><th>Build cost</th><th>Ready</th></tr>${E.phases.map(p=>`<tr><td>${esc(p.name)} &middot; ${fmt(p.mw,0)} MW</td><td>${p.cost!=null?"PHP "+fmt(p.cost,0)+" mn":"\u2014"}</td><td>month ${p.ready} (${p.readyAt})</td></tr>`).join("")}</table>`:""}
+  <p class="hint">Order-of-magnitude only: ${E.tP} months pre-development, ${E.tB} months per phase, ${E.tG} months between phase starts, counted from this month. Costs exclude IT equipment, grid works beyond the site substation, financing, taxes and escalation. Kept out of one-pagers.</p>`;}
+TIP.capexRow="IT load built in this option times the build rate per MW IT.";
+TIP.landRow="Whole site area times the land rate for this site.";
+TIP.waterRow="On-site water at full IT load: IT MW x 24 h x WUE. Check supply with the water utility or a deep-well permit (NWRB).";
+TIP.heatRow="All the power a data centre draws ends up as heat, so the heat to reject equals the facility load.";
+TIP.energyRow="Facility load x 8,760 hours. Real use is lower until the halls fill.";
+/* ===== Site selection checklist, after the IFC Performance Standards: the app
+   screens some items itself; the rest are ticked off by hand and saved with the project. ===== */
+const IFC=[
+ {k:"hazard",ps:"PS4",t:"Natural hazards: faults, flood, landslide, storm surge",auto:op=>RISK.res?"Screened above":null},
+ {k:"fuel",ps:"PS3, PS4",t:"Diesel storage and spill containment, away from wells and waterways",auto:op=>{const r=(op.rows||[]).find(x=>x[2]==="fuelRow");return r?r[1]+" on site":null;}},
+ {k:"water",ps:"PS3",t:"Water supply for cooling and domestic use, and whether the area is water-stressed",auto:null},
+ {k:"energy",ps:"PS3",t:"Energy and greenhouse gas: PUE, grid mix, renewable supply options",auto:op=>"Design PUE "+fmt(op.it?op.fac/op.it:0,2)},
+ {k:"noise",ps:"PS4",t:"Generator and chiller noise, exhaust and traffic at the nearest homes, schools and hospitals",auto:null},
+ {k:"land",ps:"PS5",t:"Clean title; no informal settlers or loss of livelihoods on or next to the site",auto:null},
+ {k:"bio",ps:"PS6",t:"Protected areas (NIPAS/E-NIPAS), Key Biodiversity Areas, mangroves and wetlands",auto:null},
+ {k:"ip",ps:"PS7",t:"Ancestral domain claims (NCIP CADT/CADC)",auto:null},
+ {k:"heritage",ps:"PS8",t:"Declared heritage or archaeological sites (NHCP, NCCA)",auto:null},
+ {k:"ecc",ps:"PS1",t:"Environmental Compliance Certificate route (DENR-EMB) and local zoning clearance",auto:null}];
+function ifcState(c,op){const a=c.auto?c.auto(op):null,done=!!(state.ifc&&state.ifc[c.k]);return {a,done,txt:done?"Checked":(a?a:"To check")};}
+function ifcHTML(op,o,B){if(!op.built.length)return "";state.ifc=state.ifc||{};
+  const n=IFC.filter(c=>ifcState(c,op).done).length;
+  return `<h2>Site selection checklist</h2><p class="hint">After the IFC Performance Standards (2012). Tick items as they are confirmed; ticks are saved with the project. ${n} of ${IFC.length} confirmed.</p>
+  <ul class="ifc">${IFC.map(c=>{const st=ifcState(c,op);return `<li><label><input type="checkbox" data-ifc="${c.k}"${st.done?" checked":""}> <span><b>${c.ps}</b> ${esc(c.t)}${st.a?` <small>${esc(st.a)}</small>`:""}</span></label></li>`;}).join("")}</ul>
+  <p class="hint">Screening aid only; it does not replace an environmental and social assessment. <a href="https://www.ifc.org/en/insights-reports/2012/ifc-performance-standards" target="_blank" rel="noopener">IFC Performance Standards</a> &middot; <a href="https://www.protectedplanet.net/country/PHL" target="_blank" rel="noopener">Protected Planet: Philippines</a></p>`;}
+document.addEventListener("change",e=>{const c=e.target.closest&&e.target.closest("input[data-ifc]");if(!c)return;
+  state.ifc=state.ifc||{};if(c.checked)state.ifc[c.dataset.ifc]=true;else delete state.ifc[c.dataset.ifc];persist();if(state.result)renderSpec();});
+ECON_IDS.forEach(id=>$(id).addEventListener("input",()=>{if(state.result)renderSpec();persist();}));
 function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activeBOD(),n=state.result.options.length;
   $("results").innerHTML=`<h2>Spec sheet, option ${String.fromCharCode(65+state.opt)} of ${n}</h2>
   ${B.placeholder?'<div class="banner">Placeholder design values. Import your basis of design profile before relying on these numbers.</div>':''}
@@ -2540,6 +2693,8 @@ function renderSpec(){const op=state.result.options[state.opt],o=state.o,B=activ
       return `<tr><td>${p.name&&p.name!=="B"+(i+1)?"Phase "+(i+1)+": "+p.name:"B"+(i+1)} ${DSHORT[p.s.dens]}${p.pinned?' <span title="Pinned by you">\u{1F4CD}</span>':""}</td><td>${fmt(p.s.m,0)} MW &middot; ${fmt(p.s.racks,0)} racks &middot; ${fmt(p.s.hall,0)} sqm hall</td><td>${fmt(cum,0)} MW</td></tr>`;}).join("")}</table><h2>Totals</h2>`;})():""}
   <table>${op.rows.map(r=>`<tr><td>${r[0]}${r[2]&&TIP[r[2]]?`<button type="button" class="info" data-tip="${r[2]}" aria-label="What does ${esc(r[0])} mean?">i</button>`:""}</td><td>${r[1]}</td></tr>`).join("")}</table>
   <p class="hint">${esc(op.grid)}</p>
+  ${econHTML(op,o,B)}
+  ${ifcHTML(op,o,B)}
   <p class="hint">${DLABEL[o.density]}, ${o.elec}, ${o.profile==="metro"?"Metro":"Campus"} profile, ${esc(B.name)}. Concept test-fit only; not for design or permitting.</p>
   <div class="legend"><span style="--c:${COLORS.clear}">Ground clearance</span><span style="--c:${COLORS.hall}">Data hall</span><span style="--c:${COLORS.admin}">Admin</span><span style="--c:${COLORS.apron}">Loading dock</span><span style="--c:${COLORS.ec}">Energy centre</span><span style="--c:#6E95BD">Roof chiller deck (dashed)</span><span style="--c:${COLORS.yard}">Ground heat rejection</span><span style="--c:${COLORS.sub}">Substation</span><span style="--c:${COLORS.pond}">Retention</span><span style="--c:${COLORS.support}">Parking and yards</span><span style="--c:${COLORS.road}">Roads</span><span style="--c:${COLORS.landscape}">Landscape</span>${o.fenceOn?'<span style="--c:#2F3A40">Security fence (dotted) and clear zone</span><span style="--c:#C9A27E">Guardhouse</span>':""}</div>
   <p class="hint">Interior detail appears as you zoom in: rack rows at the profile's ${fmt(B.rowPitch||6,1)} m pitch, and one electrical bay per 2 MW power stream — ${op.infill?"drawn as rooms, since an infill building holds its electrical plant inside":(o.elec==="EMOD"?"drawn as separate enclosures for EMOD":"drawn as one continuous room for EROOM")}. It shows the arrangement the basis of design fixes, not an engineered rack layout.</p>`;}
@@ -2813,7 +2968,7 @@ $("btnOBJ").onclick=()=>{$("modelMenu").hidden=true;exportOBJ();};
 function base(){return ($("projName").value.trim()||"dc-concept").replace(/[^\w\-]+/g,"-")+"-option-"+String.fromCharCode(65+state.opt);}
 function download(name,data,type){const b=data instanceof Blob?data:new Blob([data],{type});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
 $("btnCSV").onclick=()=>{if(!state.result)return;const op=state.result.options[state.opt],q=s=>'"'+String(s).replace(/"/g,'""')+'"';
-  const rows=[["Item","Value"],["Profile",activeBOD().name],...op.rows,["Limiting factor",op.limit],...op.flags.map(f=>["Flag",f]),["Grid",op.grid],["Site corners (lon lat)",state.ring.map(p=>p[0].toFixed(6)+" "+p[1].toFixed(6)).join("; ")]];
+  const rows=[["Item","Value"],["Profile",activeBOD().name],...op.rows,...econ(op,state.o,activeBOD()).rows.map(r=>[r[0],r[1]]),...IFC.map(c=>["Checklist: "+c.t,ifcState(c,op).txt]),["Limiting factor",op.limit],...op.flags.map(f=>["Flag",f]),["Grid",op.grid],["Site corners (lon lat)",state.ring.map(p=>p[0].toFixed(6)+" "+p[1].toFixed(6)).join("; ")]];
   download(base()+".csv",rows.map(r=>r.map(q).join(",")).join("\n"),"text/csv");};
 $("btnGeo").onclick=()=>{if(!state.result)return;const ring=state.ring.concat([state.ring[0]]);
   download(base()+".geojson",JSON.stringify({type:"FeatureCollection",features:[{type:"Feature",properties:{kind:"site"},geometry:{type:"Polygon",coordinates:[ring]}},...state.layoutGeo]}),"application/geo+json");};
@@ -3212,11 +3367,11 @@ table.ph{margin:8px 0}table.ph th:not(:first-child){text-align:right}.note{font-
 <p class="note">${E(D.limit)}</p>${D.flags.map(f=>`<div class="flag">• ${E(f)}</div>`).join("")}</div></div>
 <div class="foot"><span>CONFIDENTIAL · ${E(D.bod)} · Concept test-fit only; not for design or permitting · ${E(D.credit)}</span><span>${E(D.date)}</span></div></div>
 <scr${""}ipt>window.onload=()=>setTimeout(()=>window.print(),600);</scr${""}ipt></body></html>`);w.document.close();}
-function loadScript(src){return new Promise((ok,bad)=>{const s=document.createElement("script");s.src=src;s.onload=ok;s.onerror=()=>bad(new Error("Could not load "+src));document.head.appendChild(s);});}
+function loadScript(src,sri){return new Promise((ok,bad)=>{const s=document.createElement("script");s.src=src;if(sri){s.integrity=sri;s.crossOrigin="anonymous";}s.onload=ok;s.onerror=()=>bad(new Error("Could not load "+src));document.head.appendChild(s);});}
 async function onePagerPPT(){
   if(!state.result){status("Generate a layout first.");return;}
   status("Building the slide…");
-  try{ if(!window.PptxGenJS) await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"); }
+  try{ if(!window.PptxGenJS) await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js","sha384-Cck14aA9cifjYolcnjebXRfWGkz5ltHMBiG4px/j8GS+xQcb7OhNQWZYyWjQ+UwQ"); }
   catch(e){status("PowerPoint export needs an internet connection the first time. Use PDF (print) offline.");return;}
   const plan=await captureSitePlan(),v3=await capture3DView(),loc=drawLocationSketch(900),D=onePagerData();
   const pp=new PptxGenJS();pp.layout="LAYOUT_WIDE";const sl=pp.addSlide();sl.background={color:"F5F6F8"};const F="Aptos",FH="Aptos Display",FM="Consolas",ink="00006E",blue="00006E",surf="EEEEF7",mute="6666A8";
@@ -3260,9 +3415,9 @@ $("btnOnePDF").onclick=()=>{$("oneMenu").hidden=true;onePagerPDF();};
 $("btnOnePPT").onclick=()=>{$("oneMenu").hidden=true;onePagerPPT();};
 
 /* ===== Projects ===== */
-function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);
+function snapshot(){const v={};NUM.forEach(id=>v[id]=$(id).value);const econ={};ECON_IDS.forEach(id=>econ[id]=$(id).value);
   const _op=state.result&&state.result.options[state.opt];
-  return {app:"dccg",v:9,oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),adminSqm:$("adminSqm").value,mw:_op?+(+_op.it).toFixed(1):0,targetMW:targetOf(readOpts())||0,profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
+  return {app:"dccg",v:10,econ,ifc:Object.assign({},state.ifc),oneSide:$("oneSide").checked,hrLoc:$("hrLoc").value,view:_op?{deg:_op.deg,type:_op.type,opt:!!state.lastOpt}:null,subPinLL:state.subPinLL,ecPos:$("ecPos").value,padInSetback:$("padInSetback").checked,fenceOn:$("fenceOn").checked,pinsLL:state.pins.slice(),roadsLL:state.roadsLL,frontLL:state.frontLL,bandAxis:$("bandAxis").value,massing:$("massing").value,faceGate:$("faceGate").checked,circulation:$("circulation").value,mix:state.mix.slice(),name:$("projName").value.trim()||"Untitled site",saved:new Date().toISOString(),adminSqm:$("adminSqm").value,mw:_op?+(+_op.it).toFixed(1):0,targetMW:targetOf(readOpts())||0,profile:state.profile,elec:state.elec,density:state.density,ring:state.ring,values:v,bodName:activeBOD().name};}
 function restore(p,opts){state.pendingView=p.view?{deg:p.view.deg,type:p.view.type,opt:!!p.view.opt}:null;state.profile=p.profile;state.elec=p.elec;state.density=p.density;
   [["segProfile",p.profile],["segElec",p.elec]].forEach(([id,v])=>[...$(id).children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===v)));
   $("density").value=p.density;$("projName").value=p.name;
@@ -3271,6 +3426,7 @@ function restore(p,opts){state.pendingView=p.view?{deg:p.view.deg,type:p.view.ty
   $("btnRoadsReset").hidden=!state.roadsLL;clearRoadHandles();
   $("btnPinReset").hidden=!state.pins.length;$("btnPin").setAttribute("aria-pressed","false");$("btnPin").textContent="Pin building";clearPinHandles();state.subPinning=false;drawSubPin();
   $("hrLoc").value=p.hrLoc||"roof";$("adminSqm").value=p.adminSqm||"";$("oneSide").checked=!!p.oneSide;$("faceGate").checked=p.faceGate!==false;state.subPinLL=p.subPinLL||null;$("ecPos").value=p.ecPos||"auto";$("padInSetback").checked=p.padInSetback!==false;$("fenceOn").checked=p.fenceOn!==false;state.mix=Array.isArray(p.mix)?p.mix.slice():[];drawMix();Object.entries(p.values).forEach(([k,v])=>{if($(k))$(k).value=v;});
+  ECON_IDS.forEach(id=>$(id).value=(p.econ&&p.econ[id]!=null)?p.econ[id]:"");state.ifc=Object.assign({},p.ifc||{});
   state.ring=p.ring;state.sel=-1;buildHandles();if(!(opts&&opts.keepView))fitRing();schedule(false);drawProjects();drawSums();
   if(p.bodName&&p.bodName!==activeBOD().name) status(`Saved with profile “${p.bodName}”. Now using “${activeBOD().name}”.`);}
 const pMW=p=>p.mw!=null?p.mw:(+((p.values||{}).targetMW)||0);
@@ -3367,9 +3523,11 @@ $("importProj").onclick=()=>$("projFile").click();
 $("projFile").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const p=JSON.parse(await f.text());
     if(p.app==="dccg-backup"&&Array.isArray(p.projects)){const n=p.projects.length;
       if(!confirm(`Restore ${n} project${n===1?"":"s"} from this backup${FS.ok?` into “${FS.name}”`:""}? Saved projects with the same names will be replaced.`)){e.target.value="";return;}
-      const ls=lsGet(LS_PROJ,[]),names=new Set(p.projects.map(q=>q.name));lsSet(LS_PROJ,ls.filter(q=>!names.has(q.name)).concat(p.projects));
+      const ls=lsGet(LS_PROJ,[]),names=new Set(p.projects.map(q=>q.name));
+      const okLS=lsSet(LS_PROJ,ls.filter(q=>!names.has(q.name)).concat(p.projects));
+      if(!okLS&&!FS.ok){status("");alert("Could not restore: this browser's storage is full or blocked, so nothing was saved. Connect a shared folder and restore again, or delete old projects first.");e.target.value="";return;}
       if(FS.ok)for(const q of p.projects)await fsWrite(pFile(q.name),pClean(q));
-      await loadProjects();status(`Restored ${n} project${n===1?"":"s"}.`);e.target.value="";return;}
+      await loadProjects();status(`Restored ${n} project${n===1?"":"s"}`+(okLS?".":` to the folder only: this browser's storage is full.`));e.target.value="";return;}
     if(p.app!=="dccg")throw new Error("Not a project or backup file.");restore(p);}catch(err){status("Could not open project: "+err.message);}e.target.value="";};
 let persistT=null;function persist(){clearTimeout(persistT);persistT=setTimeout(()=>{const s=snapshot();lsSet("dccg.lastSession",s);histPush(s);},400);}
 /* ===== Undo / redo: snapshots of the whole project, taken whenever it settles after an edit ===== */
