@@ -49,7 +49,11 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
   - Upper floors: data halls with electrical and mechanical rooms and a freight lift core. Admin overflow goes up; leftover space is "Spare floor space".
   - The plan view shows the typical upper floor (`zonesUp`).
   - The freight lift core (`coreRect`) is a shaft on the street face standing 0.8 m proud of the facade, running full height plus 3.5 m overrun.
-  - The storeys cap is enforced by binary search on MW (`solveInfill`).
+  - The storeys cap is enforced by binary search on MW (`solveInfill`). If nothing fits under the cap (the dock and admin fill the ground floor), the result shows the load at the fewest floors that hold any, flagged "Storeys cap exceeded", and ranks below any compliant layout.
+- **Capacity on first sketch:**
+  - Campus buildings that do not fit at full size are retried smaller, in whole design modules (up to six sizes; two in the quick solve while dragging). A user's building mix is never downsized. Reduced buildings are flagged.
+  - A layout with no data building never outranks one with load just because it fits a substation (`rank`, `scoreOf`).
+  - Infill is tried whenever campus modules fall short, and even under "Campus modules" when no campus block fits. When infill wins in Automatic mode, the first flag reads "Infill recommended" with the campus MW for comparison; the substation, retention and parking flags follow.
 - **Flags:** height, coverage, floor loading, the storeys cap and more. The spec sheet result box turns green when the target fits and stays amber otherwise.
 
 **Visualisation**
@@ -79,6 +83,13 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 - **Project list:** sort by name / newest / recently saved / capacity. An "OPEN NOW" marker shows the open project.
 - **Compare projects:** 2–4 projects side by side (mini plan, KPIs, GRD departures, nearest fault and substation), printable.
 - **Departures from the basis of design:** an amber box on the spec sheet, shown in the app only, not on one-pagers.
+- **Cost, timeline and water (screening)** on the spec sheet, below the totals, and in the CSV export (not on one-pagers):
+  - Build cost = IT MW × rate (PHP mn per MW IT). The rate is the per-site field `capexMW` or, if blank, `cost.csaPerMW + cost.mepPerMW` from the private profile, shown split into civil/structural/architectural and MEP.
+  - Land = site area × `landRate` (PHP/sqm, per site; optional profile default `cost.landPerSqm`).
+  - Total, all-in per MW IT, and a per-phase table.
+  - Timeline: phase *i* ready at pre-development + build + *i* × gap months, from the current month (defaults 12 / 24 / 12, profile `schedule.*`, per-site fields `tPredev`, `tBuild`, `tGap`).
+  - Energy at full load (GWh/yr), heat rejected (= facility MW), cooling water at `wue` L/kWh (default 0.2 for air-cooled closed-loop chillers; about 1.8 for evaporative towers).
+- **Site selection checklist** after the IFC Performance Standards (PS1, PS3–PS8): natural hazards, diesel storage, water, energy, noise, land and resettlement, biodiversity, indigenous peoples, heritage, ECC route. Items the app screens show their value; the user ticks items off and the ticks are saved with the project.
 - Undo / redo (↶ ↷, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y), 60 steps.
 - Save and backup progress indicators (spinner, then "✓ Saved").
 
@@ -93,6 +104,9 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 - Light mode only.
 - Mobile: map at 80vh, a ☰ Tools menu, compact summary card.
 - Offline service worker (`sw.js`).
+- Error banner: uncaught errors show "Something went wrong…" with Copy details, instead of failing silently.
+- CDN libraries are pinned with SHA-384 integrity hashes (three.js through an import map).
+- The app asks the browser to keep its storage persistent once a valid profile is loaded (`navigator.storage.persist()`).
 - Keyboard shortcuts: D draw, R roads, 3 3D, T textures, L risk layers, S satellite, P pause.
 - Sidebar accordion (one section open, with summaries on closed sections).
 - Background solver (Web Worker).
@@ -105,7 +119,7 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 | P1 | Existing building as a fixed footprint | Solver works around it; for expansions like Sta. Rosa |
 | P1 | Substation placed inside the infill plot | Today infill only flags it |
 | P2 | SharePoint / Microsoft sign-in storage | On hold by user decision (see §3) |
-| P2 | Saved regression suite stored privately | Test scripts exist only in the dev session today |
+| P2 | Regression cases with real GRD values | The public suite (`tests/`) uses placeholder values only; a private set would run locally |
 | P2 | Optimise and Force fit in the worker | Currently synchronous; callers read `state.result` immediately |
 | P3 | Infill service-lane option | Discussed; user declined for now |
 | P3 | Active-volcano distances; coastline and road distances in the risk card | Offered |
@@ -135,6 +149,11 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 | Solver threading | Full re-solves after edits go to a Web Worker built from the `<script id="core">` text; coarse solves stay synchronous | UI never freezes on big sites; identical results | Time-slicing the solver (more invasive) |
 | Mobile | ☰ Tools overlay, hidden zoom and scale controls | More map, less clutter | Wrapping toolbar |
 | Repo name | `vitro-testfit` | Matches the app name "VITRO TestFit" | `dc-concept-generator` |
+| Build cost | Private profile (`cost.*`) or a per-site field; no public default | Internal cost data is confidential and the repo is public | Bundling a benchmark in the app |
+| Land price | Per-site field typed from a quote or comparable | Prices vary block by block; no verified public table | Bundled price table by city |
+| Too-small sites | Downsize campus buildings, then fall back to infill with flags | A first sketch should always show realistic capacity | Showing an empty plan with only a substation |
+| Ranking | Substation fit counts only when there is load | A plan with no building is never the best answer | Substation-first scoring |
+| Test suite | Node's built-in runner, no dependencies, placeholder values, GitHub Action on every push | Keeps the repo dependency-free and public-safe | A bundler or test framework |
 
 ---
 
@@ -147,6 +166,7 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 - **Validation:** `keyOK(raw)` against `KEY_HASH`; `missingLeaves(raw)` must be empty; then `validateBOD`.
 - **Structure** (values come from the private file; the public `PLACEHOLDER` holds generic numbers):
   - top level: `name, version, source, accessKey`
+  - optional (not required by the gate): `cost: {csaPerMW, mepPerMW, landPerSqm}` in PHP, `schedule: {predevMonths, buildMonths, phaseGapMonths}`
   - `moduleMW, rowPitch, circFactor, floorM, roofPlantM, rackKgLimit, dockApron, ecLevels, roofShare, yardClear, subSqm, subMargin, fenceInset, clearZone, roofTiers`
   - `gensPerModule, genKVA, fuelHours, fuelLPerGen`
   - `elec: { EROOM:{crit, ecPerMW, admin}, EMOD:{crit, ecPerMW, admin} }`
@@ -155,7 +175,7 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
   - `profile: { metro|campus: { targetMW, setback, maxH, maxCov, storeys, bldgMax, pond, road, supportSqm } }`
 
 ### 4.2 Project snapshot (`snapshot()` / `restore(p,{keepView})`)
-- **File:** `<name>.dccg.json`, `app:"dccg"`, `v:9`.
+- **File:** `<name>.dccg.json`, `app:"dccg"`, `v:10` (v9 files open unchanged).
 - **Fields:**
   - identity and timing: `name, saved (ISO), created (ISO), mw (achieved IT), targetMW (mix-aware)`
   - selections: `profile, elec, density`
@@ -163,6 +183,7 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
   - layout options: `oneSide, hrLoc, view {deg,type,opt}, subPinLL, ecPos, padInSetback, fenceOn, pinsLL, roadsLL {nodes,edges,w}, frontLL, bandAxis, massing, faceGate, circulation`
   - building mix: `mix [{mw, dens, st}]`
   - `adminSqm, bodName`
+  - `econ {landRate, capexMW, tPredev, tBuild, tGap, wue}` (strings, blank = profile default), `ifc {key: true}` (checklist ticks)
 - **Folder-mode extras (in memory only):** `_file`, `_dup`.
 - **Backup file:** `{app:"dccg-backup", v:1, created, count, projects:[snapshot…]}`.
 - **Stores:**
@@ -271,10 +292,10 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 
 **Hosting:** GitHub Pages from `main` (repo root).
 
-**Service worker (`sw.js`, cache version `vtf-v2`)**
+**Service worker (`sw.js`, cache version `vtf-v3`)**
 - Registered only over HTTPS or on `localhost`.
 - Page: network first.
-- Libraries and `data/`: cache first / stale-while-revalidate.
+- Libraries and `data/`: cache first / stale-while-revalidate. Pinned (integrity or CORS) requests are never served from, or stored as, opaque responses, which would fail the integrity check.
 - Map tiles: cache as you go, capped at 1,500 (`TILE_MAX`).
 - NOAH PMTiles range reads (Hugging Face) and place search are not cached, so hazard lookups and search need a connection.
 - Old `vtf-*` caches are deleted on activate. Bump `V` in `sw.js` when the caching rules change.
@@ -300,6 +321,8 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 | `data/faults-ph.json`, `data/grid-ph.json` | Site-risk snapshots (bot-maintained) |
 | `tools/build_risk_data.py` | Snapshot builder |
 | `.github/workflows/risk-data.yml` | Quarterly refresh job |
+| `tests/` | Solver regression and static checks (`node --test "tests/*.test.mjs"`) |
+| `.github/workflows/tests.yml` | Runs the tests on every push and pull request |
 | `DESIGN.md` | This document |
 
 ---
@@ -314,7 +337,8 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
   - Place search sends the typed query (and, for Photon, the map centre) to Photon and Nominatim.
   - Map tiles are fetched from OSM and Esri for the area in view.
 - **Projects** stay in `localStorage` or the user's own OneDrive folder. The app never uploads them.
-- **Before each commit:** check the diff for GRD values, access keys and `*.PRIVATE.*` files.
+- **Before each commit:** check the diff for GRD values, access keys, cost figures and `*.PRIVATE.*` files. `tests/static.test.mjs` fails the build if a `*PRIVATE*` file, an access key value, a build cost value, or a CSV/JSON outside `data/` is committed.
+- **Library integrity:** a changed file on unpkg or jsDelivr is refused by the browser. To upgrade a library, update the URL and its hash together (hash the file from the npm package: `openssl dgst -sha384 -binary file | base64`).
 
 ---
 
@@ -327,6 +351,8 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 - **Folder storage** needs a browser with the File System Access API (Chromium-based desktop browsers). Other browsers use `localStorage` and file import/export.
 - **No real concurrency control.** Two people saving the same project in a shared folder produce OneDrive duplicates ("Sync copy") for a person to reconcile.
 - **Infill** flags, but does not place, the substation (see §2.2).
+- **Cost and timeline** are order-of-magnitude: linear in MW, no escalation, financing, taxes, IT equipment or off-site grid works. The IFC checklist is a screening aid, not an environmental and social assessment.
+- **Water stress** is not screened automatically; it is a checklist item.
 
 ---
 
@@ -337,3 +363,5 @@ Status: live at https://orvinreyes-create.github.io/vitro-testfit/ · public rep
 - **Rotate the access key:** hash the new key with SHA-256, update `KEY_HASH` in `index.html`, and send colleagues the new private profile. Old profiles stop passing the gate.
 - **Change the profile schema:** update `PLACEHOLDER`, `CSV_ROWS` and `validateBOD` together, and ship matching private files, because `missingLeaves` locks out profiles that lack a new value.
 - **Change the project file format:** bump the snapshot `v` and keep `restore()` backward compatible with older files and backups.
+- **Run the tests:** `node --test "tests/*.test.mjs"` (Node 20 or later). They load the solver straight from `index.html`.
+- **Add cost rates:** add the `cost.*` rows (and optionally `schedule.*`) to the private profile CSV and re-import it. Existing profiles without them still pass the gate.
